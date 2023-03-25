@@ -1,0 +1,32 @@
+[package]
+name = "influxdb-tsdb"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "influxdb_tsdb"
+
+[dependencies.influxdb-query]
+version = "0.1.0"
+path = "../query"
+[dependencies.influxdb-utils]
+version = "0.1.0"
+path = "../utils"
+
+[dependencies]
+bytes = "1.4.0"
+dashmap = "5.3"
+chrono = "0.4"
+trait_enum = "0.5"
+anyhow = "1.0"
+thiserror = "1.0"
+#bumpalo = "3.9"
+ordered-float = { version = "3.0", default-features = false }
+murmur3 = "0.5"
+
+tokio = "1"
+
+#fmmap = { version = "0.3", features = ["tokio-async"] }
+
+[dev-dependencies]
+rand = "0.8"

@@ -1,0 +1,7 @@
+
+[workspace]
+members = [
+    "src/tsdb",
+    "src/query",
+    "src/utils",
+]

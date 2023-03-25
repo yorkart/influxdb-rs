@@ -1,0 +1,10 @@
+[package]
+name = "influxdb-utils"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "influxdb_utils"
+
+[dependencies]
+chrono = "0.4"
