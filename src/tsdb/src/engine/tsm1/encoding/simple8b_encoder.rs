@@ -384,7 +384,7 @@ pub fn encode(src: &[u64]) -> anyhow::Result<(u64, usize)> {
 /// Encode returns a packed slice of the values from src.  If a value is over
 /// 1 << 60, an error is returned.  The input src is modified to avoid extra
 /// allocations.  If you need to re-use, use a copy.
-pub fn encode_all(src: &mut [u64]) -> anyhow::Result<&[u64]> {
+pub fn encode_all(src: &mut [u64]) -> anyhow::Result<usize> {
     let src_len = src.len();
     let mut i = 0;
 
@@ -451,10 +451,10 @@ pub fn encode_all(src: &mut [u64]) -> anyhow::Result<&[u64]> {
         }
         j += 1;
     }
-    return Ok(&src[..j]);
+    return Ok(j);
 }
 
-fn decode(dst: &mut [u64], v: u64) -> anyhow::Result<usize> {
+pub fn decode(dst: &mut [u64], v: u64) -> anyhow::Result<usize> {
     let sel = (v >> 60) as usize;
     if sel >= 16 {
         return Err(anyhow!("invalid selector value: {}", sel));
@@ -465,7 +465,7 @@ fn decode(dst: &mut [u64], v: u64) -> anyhow::Result<usize> {
 
 /// Decode writes the uncompressed values from src to dst.  It returns the number
 /// of values written or an error.
-fn decode_all(dst: &mut [u64], src: &[u64]) -> anyhow::Result<usize> {
+pub fn decode_all(dst: &mut [u64], src: &[u64]) -> anyhow::Result<usize> {
     let mut j = 0;
     for v in src {
         let sel = (v >> 60) as usize;
@@ -1008,7 +1008,10 @@ mod tests {
         let mut src = vec![];
 
         // check for error
-        let encoded = encode_all(&mut src).expect("failed to encode src");
+        let encoded = {
+            let sz = encode_all(&mut src).expect("failed to encode src");
+            &src[..sz]
+        };
 
         let mut decoded = vec![];
         let n = decode_all(decoded.as_mut_slice(), encoded).expect("failed to decode src");
