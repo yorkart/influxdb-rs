@@ -64,7 +64,7 @@ impl IntegerEncoder {
     pub fn write(&mut self, v: i64) {
         // Delta-encode each value as it's written.  This happens before
         // ZigZagEncoding because the deltas could be negative.
-        let delta = v - self.prev;
+        let (delta, _) = v.overflowing_sub(self.prev);
         self.prev = v;
         let enc = zig_zag_encode(delta);
         if self.values.len() > 1 {
@@ -173,7 +173,7 @@ pub enum IntegerDecoder<'a> {
 }
 
 impl<'a> IntegerDecoder<'a> {
-    pub fn new(b: &[u8]) -> anyhow::Result<Self> {
+    pub fn new(b: &'a [u8]) -> anyhow::Result<Self> {
         if b.len() > 0 {
             let encoding = b[0] >> 4;
             let b = &b[1..];
@@ -211,7 +211,7 @@ impl<'a> Decoder for IntegerDecoder<'a> {
     }
 }
 
-struct EmptyDecoder {}
+pub struct EmptyDecoder {}
 
 impl Decoder for EmptyDecoder {
     fn next(&mut self) -> bool {
@@ -223,7 +223,7 @@ impl Decoder for EmptyDecoder {
     }
 }
 
-struct RleDecoder {
+pub struct RleDecoder {
     first: i64,
     delta: i64,
     repeat: u64,
@@ -288,7 +288,7 @@ impl Decoder for RleDecoder {
     }
 }
 
-struct PackedDecoder<'a> {
+pub struct PackedDecoder<'a> {
     first: i64,
 
     bytes: &'a [u8],
@@ -340,7 +340,7 @@ impl<'a> Decoder for PackedDecoder<'a> {
             return true;
         }
 
-        if self.v_step < self.v_len {
+        if self.v_len > 0 && self.v_step < self.v_len - 1 {
             self.v_step += 1;
             self.first += zig_zag_decode(self.values[self.v_step]);
             return true;
@@ -368,6 +368,11 @@ impl<'a> Decoder for PackedDecoder<'a> {
             return false;
         }
         self.v_len = r.unwrap();
+        if self.v_len == 0 {
+            self.err = Some(anyhow!("simple8b length is 0"));
+            return false;
+        }
+
         self.v_step = 0;
 
         self.first += zig_zag_decode(self.values[self.v_step]);
@@ -381,7 +386,7 @@ impl<'a> Decoder for PackedDecoder<'a> {
     }
 }
 
-struct UncompressedDecoder<'a> {
+pub struct UncompressedDecoder<'a> {
     first: i64,
 
     bytes: &'a [u8],
@@ -432,7 +437,7 @@ impl<'a> Decoder for UncompressedDecoder<'a> {
         }
 
         let v = u64::from_be_bytes(self.bytes[self.b_step..self.b_step + 8].try_into().unwrap());
-        self.first += zig_zag_decode(v);
+        (self.first, _) = self.first.overflowing_add(zig_zag_decode(v));
         self.b_step += 8;
 
         true
@@ -440,5 +445,464 @@ impl<'a> Decoder for UncompressedDecoder<'a> {
 
     fn read(&self) -> i64 {
         self.first
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::engine::tsm1::encoding::int_encoder::{
+        Decoder, IntegerDecoder, IntegerEncoder, INT_COMPRESSED_SIMPLE, INT_UNCOMPRESSED,
+    };
+
+    #[test]
+    fn test_integer_encoder_no_values() {
+        let mut enc = IntegerEncoder::new(0);
+        let b = enc.bytes().unwrap();
+
+        assert_eq!(b.len(), 0, "unexpected length: exp 0, got {}", b.len());
+
+        let mut dec = IntegerDecoder::new(b.as_slice()).unwrap();
+        assert_eq!(
+            dec.next(),
+            false,
+            "unexpected next value: got true, exp false"
+        );
+    }
+
+    #[test]
+    fn test_integer_encoder_one() {
+        let mut enc = IntegerEncoder::new(1);
+        let v1 = 1_i64;
+
+        enc.write(v1);
+        let b = enc.bytes().unwrap();
+
+        let got = b[0] >> 4;
+        assert_eq!(
+            got, INT_COMPRESSED_SIMPLE,
+            "encoding type mismatch: exp simple, got {}",
+            got
+        );
+
+        let mut dec = IntegerDecoder::new(b.as_slice()).unwrap();
+        assert_eq!(
+            dec.next(),
+            true,
+            "unexpected next value: got true, exp false"
+        );
+        assert_eq!(
+            dec.read(),
+            v1,
+            "read value mismatch: got {}, exp {}",
+            dec.read(),
+            v1
+        );
+    }
+
+    #[test]
+    fn test_integer_encoder_two() {
+        let mut enc = IntegerEncoder::new(2);
+        let v1 = 1;
+        let v2 = 2;
+
+        enc.write(v1);
+        enc.write(v2);
+
+        let b = enc.bytes().unwrap();
+
+        let got = b[0] >> 4;
+        assert_eq!(
+            got, INT_COMPRESSED_SIMPLE,
+            "encoding type mismatch: exp simple, got {}",
+            got
+        );
+
+        let mut dec = IntegerDecoder::new(b.as_slice()).unwrap();
+        assert_eq!(
+            dec.next(),
+            true,
+            "unexpected next value: got true, exp false"
+        );
+        assert_eq!(
+            dec.read(),
+            v1,
+            "read value mismatch: got {}, exp {}",
+            dec.read(),
+            v1
+        );
+
+        assert_eq!(
+            dec.next(),
+            true,
+            "unexpected next value: got true, exp false"
+        );
+        assert_eq!(
+            dec.read(),
+            v2,
+            "read value mismatch: got {}, exp {}",
+            dec.read(),
+            v2
+        );
+    }
+
+    #[test]
+    fn test_integer_encoder_negative() {
+        let mut enc = IntegerEncoder::new(3);
+        let v1 = -2;
+        let v2 = 0;
+        let v3 = 1;
+
+        enc.write(v1);
+        enc.write(v2);
+        enc.write(v3);
+
+        let b = enc.bytes().unwrap();
+
+        let got = b[0] >> 4;
+        assert_eq!(
+            got, INT_COMPRESSED_SIMPLE,
+            "encoding type mismatch: exp simple, got {}",
+            got
+        );
+
+        let mut dec = IntegerDecoder::new(b.as_slice()).unwrap();
+        assert_eq!(
+            dec.next(),
+            true,
+            "unexpected next value: got true, exp false"
+        );
+        assert_eq!(
+            dec.read(),
+            v1,
+            "read value mismatch: got {}, exp {}",
+            dec.read(),
+            v1
+        );
+
+        assert_eq!(
+            dec.next(),
+            true,
+            "unexpected next value: got true, exp false"
+        );
+        assert_eq!(
+            dec.read(),
+            v2,
+            "read value mismatch: got {}, exp {}",
+            dec.read(),
+            v2
+        );
+
+        assert_eq!(
+            dec.next(),
+            true,
+            "unexpected next value: got true, exp false"
+        );
+        assert_eq!(
+            dec.read(),
+            v3,
+            "read value mismatch: got {}, exp {}",
+            dec.read(),
+            v3
+        );
+    }
+
+    #[test]
+    fn test_integer_encoder_large_range() {
+        let mut enc = IntegerEncoder::new(2);
+        let v1 = i64::MIN;
+        let v2 = i64::MAX;
+
+        enc.write(v1);
+        enc.write(v2);
+
+        let b = enc.bytes().unwrap();
+
+        let got = b[0] >> 4;
+        assert_eq!(
+            got, INT_UNCOMPRESSED,
+            "encoding type mismatch: exp uncompressed, got {}",
+            got
+        );
+
+        let mut dec = IntegerDecoder::new(b.as_slice()).unwrap();
+        assert_eq!(
+            dec.next(),
+            true,
+            "unexpected next value: got true, exp false"
+        );
+        assert_eq!(
+            dec.read(),
+            v1,
+            "read value mismatch: got {}, exp {}",
+            dec.read(),
+            v1
+        );
+
+        assert_eq!(
+            dec.next(),
+            true,
+            "unexpected next value: got true, exp false"
+        );
+        assert_eq!(
+            dec.read(),
+            v2,
+            "read value mismatch: got {}, exp {}",
+            dec.read(),
+            v2
+        );
+    }
+
+    #[test]
+    fn test_integer_encoder_uncompressed() {
+        let mut enc = IntegerEncoder::new(3);
+        let v1 = 0;
+        let v2 = 1;
+        let v3 = 1 << 60;
+
+        enc.write(v1);
+        enc.write(v2);
+        enc.write(v3);
+
+        let b = enc.bytes().unwrap();
+
+        let exp = 25;
+        assert_eq!(
+            b.len(),
+            exp,
+            "length mismatch: got {}, exp {}",
+            b.len(),
+            exp
+        );
+
+        let got = b[0] >> 4;
+        assert_eq!(
+            got, INT_UNCOMPRESSED,
+            "encoding type mismatch: exp uncompressed, got {}",
+            got
+        );
+
+        let mut dec = IntegerDecoder::new(b.as_slice()).unwrap();
+        assert_eq!(
+            dec.next(),
+            true,
+            "unexpected next value: got true, exp false"
+        );
+        assert_eq!(
+            dec.read(),
+            v1,
+            "read value mismatch: got {}, exp {}",
+            dec.read(),
+            v1
+        );
+
+        assert_eq!(
+            dec.next(),
+            true,
+            "unexpected next value: got true, exp false"
+        );
+        assert_eq!(
+            dec.read(),
+            v2,
+            "read value mismatch: got {}, exp {}",
+            dec.read(),
+            v2
+        );
+
+        assert_eq!(
+            dec.next(),
+            true,
+            "unexpected next value: got true, exp false"
+        );
+        assert_eq!(
+            dec.read(),
+            v3,
+            "read value mismatch: got {}, exp {}",
+            dec.read(),
+            v3
+        );
+    }
+
+    #[test]
+    fn test_integer_encoder_negative_uncompressed() {
+        let values: [i64; 24] = [
+            -2352281900722994752,
+            1438442655375607923,
+            -4110452567888190110,
+            -1221292455668011702,
+            -1941700286034261841,
+            -2836753127140407751,
+            1432686216250034552,
+            3663244026151507025,
+            -3068113732684750258,
+            -1949953187327444488,
+            3713374280993588804,
+            3226153669854871355,
+            -2093273755080502606,
+            1006087192578600616,
+            -2272122301622271655,
+            2533238229511593671,
+            -4450454445568858273,
+            2647789901083530435,
+            2761419461769776844,
+            -1324397441074946198,
+            -680758138988210958,
+            94468846694902125,
+            -2394093124890745254,
+            -2682139311758778198,
+        ];
+
+        let mut enc = IntegerEncoder::new(256);
+        for v in &values {
+            enc.write(*v);
+        }
+
+        let b = enc.bytes().unwrap();
+        let got = b[0] >> 4;
+        assert_eq!(
+            got, INT_UNCOMPRESSED,
+            "encoding type mismatch: exp uncompressed, got {}",
+            got
+        );
+
+        let mut dec = IntegerDecoder::new(b.as_slice()).unwrap();
+
+        let mut i = 0;
+        while dec.next() {
+            assert_eq!(
+                i > values.len(),
+                false,
+                "read too many values: got {}, exp {}",
+                i,
+                values.len()
+            );
+            assert_eq!(
+                values[i],
+                dec.read(),
+                "read value {} mismatch: got {}, exp {}",
+                i,
+                dec.read(),
+                values[i]
+            );
+            i += 1
+        }
+
+        assert_eq!(
+            i,
+            values.len(),
+            "failed to read enough values: got {}, exp {}",
+            i,
+            values.len()
+        );
+    }
+
+    #[test]
+    fn test_integer_encoder_all_negative() {
+        let mut enc = IntegerEncoder::new(3);
+        let values: [i64; 3] = [-10, -5, -1];
+
+        for v in &values {
+            enc.write(*v);
+        }
+
+        let b = enc.bytes().unwrap();
+        let got = b[0] >> 4;
+        assert_eq!(
+            got, INT_COMPRESSED_SIMPLE,
+            "encoding type mismatch: exp compressed_simple, got {}",
+            got
+        );
+
+        let mut dec = IntegerDecoder::new(b.as_slice()).unwrap();
+
+        let mut i = 0;
+        while dec.next() {
+            assert_eq!(
+                i > values.len(),
+                false,
+                "read too many values: got {}, exp {}",
+                i,
+                values.len()
+            );
+            assert_eq!(
+                values[i],
+                dec.read(),
+                "read value {} mismatch: got {}, exp {}",
+                i,
+                dec.read(),
+                values[i]
+            );
+            i += 1
+        }
+
+        assert_eq!(
+            i,
+            values.len(),
+            "failed to read enough values: got {}, exp {}",
+            i,
+            values.len()
+        );
+    }
+
+    #[test]
+    fn test_integer_encoder_counter_packed() {
+        let mut enc = IntegerEncoder::new(16);
+        let values: [i64; 6] = [
+            1000000000000000,
+            1000000000000000 + 1,
+            1000000000000000 + 2,
+            1000000000000000 + 3,
+            1000000000000000 + 4,
+            1000000000000000 + 6,
+        ];
+
+        for v in &values {
+            enc.write(*v);
+        }
+
+        let b = enc.bytes().unwrap();
+        let got = b[0] >> 4;
+        assert_eq!(
+            got, INT_COMPRESSED_SIMPLE,
+            "encoding type mismatch: exp compressed_simple, got {}",
+            got
+        );
+        let exp = 17;
+        assert_eq!(
+            b.len(),
+            exp,
+            "length mismatch: got {}, exp {}",
+            b.len(),
+            exp
+        );
+
+        let mut dec = IntegerDecoder::new(b.as_slice()).unwrap();
+
+        let mut i = 0;
+        while dec.next() {
+            assert_eq!(
+                i > values.len(),
+                false,
+                "read too many values: got {}, exp {}",
+                i,
+                values.len()
+            );
+            assert_eq!(
+                values[i],
+                dec.read(),
+                "read value {} mismatch: got {}, exp {}",
+                i,
+                dec.read(),
+                values[i]
+            );
+            i += 1
+        }
+
+        assert_eq!(
+            i,
+            values.len(),
+            "failed to read enough values: got {}, exp {}",
+            i,
+            values.len()
+        );
     }
 }
