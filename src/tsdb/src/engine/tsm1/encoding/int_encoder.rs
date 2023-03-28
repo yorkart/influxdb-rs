@@ -3491,4 +3491,16 @@ mod tests {
             assert_eq!(got, values);
         }
     }
+
+    // #[test]
+    // fn test_integer_decoder_corrupt() {
+    //     let cases = [
+    //         "",                     // Empty
+    //         "\x00abc",              // Uncompressed: less than 8 bytes
+    //         "\x10abc",              // Packed: less than 8 bytes
+    //         "\x20abc",              // RLE: less than 8 bytes
+    //         "\x2012345678\x90",     // RLE: valid starting value but invalid delta value
+    //         "\x2012345678\x01\x90", // RLE: valid starting, valid delta value, invalid repeat value
+    //     ];
+    // }
 }

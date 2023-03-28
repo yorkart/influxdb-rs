@@ -26,6 +26,7 @@ murmur3 = "0.5"
 
 tokio = "1"
 
+tsz = "0.1.4"
 #fmmap = { version = "0.3", features = ["tokio-async"] }
 
 [dev-dependencies]
