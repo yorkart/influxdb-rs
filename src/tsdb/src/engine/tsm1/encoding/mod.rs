@@ -1,6 +1,6 @@
 use influxdb_utils::time::{time_format, unix_nano_to_time};
 
-pub mod bit_io;
+pub mod bit_encoder;
 pub mod float_encoder;
 pub mod int_encoder;
 pub mod number_encoder;

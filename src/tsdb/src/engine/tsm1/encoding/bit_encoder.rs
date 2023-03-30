@@ -81,28 +81,32 @@ pub trait Write {
 ///
 /// BufferedReader encapsulates a buffer of bytes which can be read from.
 #[derive(Debug)]
-pub struct BufferedReader {
-    bytes: Vec<u8>, // internal buffer of bytes
+pub struct BufferedReader<'a> {
+    bytes: &'a [u8], // internal buffer of bytes
     index: usize,   // index into bytes
     pos: u32,       // position in the byte we are currenlty reading
 }
 
-impl BufferedReader {
+impl<'a> BufferedReader<'a> {
     /// new creates a new `BufferedReader` from `bytes`
-    pub fn new(bytes: Box<[u8]>) -> Self {
+    pub fn new(bytes: &'a [u8]) -> Self {
         BufferedReader {
-            bytes: bytes.into_vec(),
+            bytes,
             index: 0,
             pos: 0,
         }
     }
 
-    fn get_byte(&mut self) -> Result<u8, Error> {
-        self.bytes.get(self.index).cloned().ok_or(Error::EOF)
+    fn get_byte(&self) -> Result<u8, Error> {
+        if self.index >= self.bytes.len() {
+            Err(Error::EOF)
+        } else {
+            Ok(self.bytes[self.index])
+        }
     }
 }
 
-impl Read for BufferedReader {
+impl<'a> Read for BufferedReader<'a> {
     fn read_bit(&mut self) -> Result<Bit, Error> {
         if self.pos == 8 {
             self.index += 1;
