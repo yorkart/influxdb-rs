@@ -103,12 +103,12 @@ impl IntegerEncoder {
         b.put_u64(self.values[0]);
 
         // The first delta
-        let mut tmp = [0u8; 9];
+        let mut tmp = [0u8; 10];
         let mut sz = self.values[1].encode_var(&mut tmp);
         b.extend_from_slice(&tmp[..sz]);
 
         // The number of times the delta is repeated
-        sz = ((self.values.len() - 1) as u64).encode_var(&mut tmp);
+        sz = (self.values.len() as u64).encode_var(&mut tmp);
         b.extend_from_slice(&tmp[..sz]);
 
         Ok(b)
@@ -245,7 +245,7 @@ pub struct RleDecoder {
     step: i64,
 }
 
-impl<'a> RleDecoder {
+impl RleDecoder {
     pub fn new(bytes: &[u8]) -> anyhow::Result<Self> {
         if bytes.len() == 0 {
             return Err(anyhow!(
@@ -286,7 +286,7 @@ impl Decoder for RleDecoder {
     fn next(&mut self) -> bool {
         self.step += 1;
 
-        if self.step >= (self.repeat + 1) as i64 {
+        if self.step >= self.repeat as i64 {
             return false;
         }
 
