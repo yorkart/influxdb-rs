@@ -522,9 +522,10 @@ impl<'a> Decoder for UncompressedDecoder<'a> {
 
 #[cfg(test)]
 mod tests {
-    use influxdb_utils::time;
     use std::ops::Add;
     use std::time::Duration;
+
+    use influxdb_utils::time;
 
     use crate::engine::tsm1::encoding::timestamp_encoder::{
         Decoder, TimeDecoder, TimeEncoder, TIME_COMPRESSED_PACKED_SIMPLE, TIME_COMPRESSED_RLE,
