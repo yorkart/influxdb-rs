@@ -182,12 +182,11 @@ impl TimeEncoder {
         bytes.push(b0);
 
         let mut tmp = [0u8; 10];
-        let mut sz = 0;
 
         // The first timestamp
         bytes.put_u64(first);
         // The first delta
-        sz = ((delta / div) as u64).encode_var(&mut tmp);
+        let mut sz = ((delta / div) as u64).encode_var(&mut tmp);
         bytes.extend_from_slice(&tmp[..sz]);
 
         // The number of times the delta is repeated
@@ -923,7 +922,7 @@ mod tests {
     fn test_time_encoder_reverse() {
         let mut enc = TimeEncoder::new(3);
 
-        let mut ts = vec![3_i64, 2_i64, 0_i64];
+        let ts = vec![3_i64, 2_i64, 0_i64];
 
         for v in &ts {
             enc.write(*v);

@@ -9,7 +9,7 @@ impl Number for u64 {
         8
     }
 
-    fn decode(src: &[u8]) -> Option<(Self, usize)> {
+    fn decode(_src: &[u8]) -> Option<(Self, usize)> {
         todo!()
     }
 

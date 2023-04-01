@@ -116,7 +116,7 @@ pub fn new_string_value(t: i64, v: Vec<u8>) -> Value {
     }
 }
 
-pub async fn encode_float_block(values: Vec<Value>, dst: &mut Vec<u8>) -> anyhow::Result<()> {
+pub async fn encode_float_block(values: Vec<Value>, _dst: &mut Vec<u8>) -> anyhow::Result<()> {
     if values.len() == 0 {
         return Ok(());
     }

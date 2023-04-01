@@ -172,7 +172,7 @@ impl<'a> FloatDecoder<'a> {
         match bit {
             Bit::Zero => Ok(self.val),
             Bit::One => {
-                let mut bit = self.br.as_mut().unwrap().read_bit()?;
+                let bit = self.br.as_mut().unwrap().read_bit()?;
                 match bit {
                     Bit::Zero => {
                         // reuse leading/trailing zero bits
@@ -320,7 +320,7 @@ mod tests {
         assert_eq!(it.error().is_none(), true, "it.Error()=%v, want nil");
     }
 
-    const twoHoursData: [f64; 120] = [
+    const TWO_HOURS_DATA: [f64; 120] = [
         // 2h of data, rows of 10 values
         761_f64, 727_f64, 763_f64, 706_f64, 700_f64, 679_f64, 757_f64, 708_f64, 739_f64, 707_f64,
         699_f64, 740_f64, 729_f64, 766_f64, 730_f64, 715_f64, 705_f64, 693_f64, 765_f64, 724_f64,
@@ -339,7 +339,7 @@ mod tests {
     #[test]
     fn test_float_encoder_roundtrip() {
         let mut s = FloatEncoder::new();
-        for p in &twoHoursData {
+        for p in &TWO_HOURS_DATA {
             s.write(*p);
         }
         s.flush();
@@ -347,7 +347,7 @@ mod tests {
         let b = s.bytes().unwrap();
 
         let mut it = FloatDecoder::new(b.as_slice()).unwrap();
-        for w in &twoHoursData {
+        for w in &TWO_HOURS_DATA {
             assert_eq!(it.next(), true, "Next()=false for {}, want true", *w);
 
             let vv = it.values();
