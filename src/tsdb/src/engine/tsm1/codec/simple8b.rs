@@ -1,5 +1,3 @@
-use anyhow::anyhow;
-
 /// maximum value that can be encoded.
 pub const MAX_VALUE: u64 = (1 << 60) - 1;
 
@@ -278,7 +276,7 @@ static SELECTOR: [Packing; 16] = [
     },
 ];
 
-fn count_bytes(b: &[u8]) -> anyhow::Result<usize> {
+pub fn count_bytes(b: &[u8]) -> anyhow::Result<usize> {
     let mut count = 0usize;
     let mut step = 0;
     while b.len() - step >= 8 {

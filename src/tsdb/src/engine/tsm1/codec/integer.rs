@@ -18,13 +18,12 @@
 //! encoding such as PFOR if only a small number of values exceed the max compressed value range.  This
 //! should improve compression ratios with very large integers near the ends of the int64 range.
 
-use anyhow::anyhow;
 use bytes::BufMut;
 
-use crate::engine::tsm1::codec::simple8b;
 use crate::engine::tsm1::codec::varint::VarInt;
 use crate::engine::tsm1::codec::zigzag::zig_zag_decode;
 use crate::engine::tsm1::codec::zigzag::zig_zag_encode;
+use crate::engine::tsm1::codec::{simple8b, Decoder, Encoder};
 
 /// INT_UNCOMPRESSED is an uncompressed format using 8 bytes per point
 const INT_UNCOMPRESSED: u8 = 0;
@@ -48,47 +47,6 @@ impl IntegerEncoder {
             rle: true,
             values: Vec::with_capacity(sz),
         }
-    }
-
-    /// Flush is no-op
-    pub fn flush(&self) {}
-
-    /// Reset sets the encoder back to its initial state.
-    pub fn reset(&mut self) {
-        self.prev = 0;
-        self.rle = true;
-        self.values.clear();
-    }
-
-    /// Write encodes v to the underlying buffers.
-    pub fn write(&mut self, v: i64) {
-        // Delta-encode each value as it's written.  This happens before
-        // ZigZagEncoding because the deltas could be negative.
-        let (delta, _) = v.overflowing_sub(self.prev);
-        self.prev = v;
-        let enc = zig_zag_encode(delta);
-        if self.values.len() > 1 {
-            self.rle = self.rle && self.values[self.values.len() - 1] == enc;
-        }
-
-        self.values.push(enc);
-    }
-
-    /// Bytes returns a copy of the underlying buffer.
-    pub fn bytes(&mut self) -> anyhow::Result<Vec<u8>> {
-        // Only run-length encode if it could reduce storage size.
-        if self.rle && self.values.len() > 2 {
-            return self.encode_rle();
-        }
-
-        for v in self.values.as_slice() {
-            // Value is too large to encode using packed format
-            if *v > simple8b::MAX_VALUE {
-                return self.encode_uncompressed();
-            }
-        }
-
-        return self.encode_packed();
     }
 
     fn encode_rle(&self) -> anyhow::Result<Vec<u8>> {
@@ -159,11 +117,37 @@ impl IntegerEncoder {
     }
 }
 
-/// IntegerDecoder decodes a byte slice into int64s.
-pub trait Decoder {
-    fn next(&mut self) -> bool;
-    fn read(&self) -> i64;
-    fn err(&self) -> Option<&anyhow::Error>;
+impl Encoder<i64> for IntegerEncoder {
+    fn write(&mut self, v: i64) {
+        // Delta-encode each value as it's written.  This happens before
+        // ZigZagEncoding because the deltas could be negative.
+        let (delta, _) = v.overflowing_sub(self.prev);
+        self.prev = v;
+        let enc = zig_zag_encode(delta);
+        if self.values.len() > 1 {
+            self.rle = self.rle && self.values[self.values.len() - 1] == enc;
+        }
+
+        self.values.push(enc);
+    }
+
+    fn flush(&mut self) {}
+
+    fn bytes(&mut self) -> anyhow::Result<Vec<u8>> {
+        // Only run-length encode if it could reduce storage size.
+        if self.rle && self.values.len() > 2 {
+            return self.encode_rle();
+        }
+
+        for v in self.values.as_slice() {
+            // Value is too large to encode using packed format
+            if *v > simple8b::MAX_VALUE {
+                return self.encode_uncompressed();
+            }
+        }
+
+        return self.encode_packed();
+    }
 }
 
 pub enum IntegerDecoder<'a> {
@@ -192,7 +176,7 @@ impl<'a> IntegerDecoder<'a> {
     }
 }
 
-impl<'a> Decoder for IntegerDecoder<'a> {
+impl<'a> Decoder<i64> for IntegerDecoder<'a> {
     fn next(&mut self) -> bool {
         match self {
             Self::RleDecoder(d) => d.next(),
@@ -223,7 +207,7 @@ impl<'a> Decoder for IntegerDecoder<'a> {
 
 pub struct EmptyDecoder {}
 
-impl Decoder for EmptyDecoder {
+impl<'a> Decoder<i64> for EmptyDecoder {
     fn next(&mut self) -> bool {
         false
     }
@@ -282,7 +266,7 @@ impl RleDecoder {
     }
 }
 
-impl Decoder for RleDecoder {
+impl<'a> Decoder<i64> for RleDecoder {
     fn next(&mut self) -> bool {
         self.step += 1;
 
@@ -347,7 +331,7 @@ impl<'a> PackedDecoder<'a> {
     }
 }
 
-impl<'a> Decoder for PackedDecoder<'a> {
+impl<'a> Decoder<i64> for PackedDecoder<'a> {
     fn next(&mut self) -> bool {
         if self.err.is_some() {
             return false;
@@ -442,7 +426,7 @@ impl<'a> UncompressedDecoder<'a> {
     }
 }
 
-impl<'a> Decoder for UncompressedDecoder<'a> {
+impl<'a> Decoder<i64> for UncompressedDecoder<'a> {
     fn next(&mut self) -> bool {
         if self.b_step == 0 {
             self.b_step += 8;
@@ -480,6 +464,7 @@ mod tests {
         Decoder, IntegerDecoder, IntegerEncoder, INT_COMPRESSED_RLE, INT_COMPRESSED_SIMPLE,
         INT_UNCOMPRESSED,
     };
+    use crate::engine::tsm1::codec::Encoder;
 
     #[test]
     fn test_integer_encoder_no_values() {

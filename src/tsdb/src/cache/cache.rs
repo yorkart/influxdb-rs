@@ -1,7 +1,5 @@
 use std::sync::{Arc, RwLock};
 
-use anyhow::anyhow;
-
 use crate::cache::encoding::Value;
 
 pub struct Values {

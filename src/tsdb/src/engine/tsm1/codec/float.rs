@@ -5,10 +5,8 @@
 //! This implementation uses a sentinel value of NaN which means that float64 NaN cannot be stored using
 //! this version.
 
-use anyhow::anyhow;
-
-use crate::engine::tsm1::codec::bit;
 use crate::engine::tsm1::codec::bit::{Bit, BufferedReader, BufferedWriter, Read, Write};
+use crate::engine::tsm1::codec::{bit, Decoder, Encoder};
 
 /// Note: an uncompressed format is not yet implemented.
 /// FLOAT_COMPRESSED_GORILLA is a compressed format using the gorilla paper encoding
@@ -49,27 +47,10 @@ impl FloatEncoder {
             finished: false,
         }
     }
+}
 
-    /// Bytes returns a copy of the underlying byte buffer used in the encoder.
-    pub fn bytes(&mut self) -> anyhow::Result<Vec<u8>> {
-        if let Some(err) = &self.err {
-            Err(anyhow!(err.to_string()))
-        } else {
-            Ok(self.bw.as_slice().to_vec())
-        }
-    }
-
-    /// Flush indicates there are no more values to encode.
-    pub fn flush(&mut self) {
-        if !self.finished {
-            // write an end-of-stream record
-            self.finished = true;
-            // self.write(f64::NAN);
-            self.write(f64::from_bits(UVNAN));
-        }
-    }
-
-    pub fn write(&mut self, v: f64) {
+impl Encoder<f64> for FloatEncoder {
+    fn write(&mut self, v: f64) {
         // Only allow NaN as a sentinel value
         if v.is_nan() && !self.finished {
             self.err = Some(anyhow!("unsupported value: NaN"));
@@ -125,6 +106,23 @@ impl FloatEncoder {
         }
 
         self.val = v;
+    }
+
+    fn flush(&mut self) {
+        if !self.finished {
+            // write an end-of-stream record
+            self.finished = true;
+            // self.write(f64::NAN);
+            self.write(f64::from_bits(UVNAN));
+        }
+    }
+
+    fn bytes(&mut self) -> anyhow::Result<Vec<u8>> {
+        if let Some(err) = &self.err {
+            Err(anyhow!(err.to_string()))
+        } else {
+            Ok(self.bw.as_slice().to_vec())
+        }
     }
 }
 
@@ -197,9 +195,10 @@ impl<'a> FloatDecoder<'a> {
             }
         }
     }
+}
 
-    /// Next returns true if there are remaining values to read.
-    pub fn next(&mut self) -> bool {
+impl<'a> Decoder<f64> for FloatDecoder<'a> {
+    fn next(&mut self) -> bool {
         if self.err.is_some() || self.finished {
             return false;
         }
@@ -234,11 +233,11 @@ impl<'a> FloatDecoder<'a> {
         }
     }
 
-    pub fn values(&self) -> f64 {
+    fn read(&self) -> f64 {
         f64::from_bits(self.val)
     }
 
-    pub fn error(&self) -> Option<&anyhow::Error> {
+    fn err(&self) -> Option<&anyhow::Error> {
         self.err.as_ref()
     }
 }
@@ -246,6 +245,7 @@ impl<'a> FloatDecoder<'a> {
 #[cfg(test)]
 mod tests {
     use crate::engine::tsm1::codec::float::{FloatDecoder, FloatEncoder};
+    use crate::engine::tsm1::codec::{Decoder, Encoder};
 
     #[test]
     fn test_float_encoder_simple() {
@@ -279,12 +279,12 @@ mod tests {
         for w in want {
             assert_eq!(it.next(), true, "Next()=false for {}, want true", w);
 
-            let vv = it.values();
+            let vv = it.read();
             assert_eq!(w, vv, "Values()=({}), want ({})\n", vv, w);
         }
 
         assert_eq!(it.next(), false, "Next()=true .., want false");
-        assert_eq!(it.error().is_none(), true, "it.Error()=%v, want nil");
+        assert_eq!(it.err().is_none(), true, "it.Error()=%v, want nil");
     }
 
     #[test]
@@ -310,12 +310,12 @@ mod tests {
         for w in want {
             assert_eq!(it.next(), true, "Next()=false for {}, want true", w);
 
-            let vv = it.values();
+            let vv = it.read();
             assert_eq!(w, vv, "Values()=({}), want ({})\n", vv, w);
         }
 
         assert_eq!(it.next(), false, "Next()=true .., want false");
-        assert_eq!(it.error().is_none(), true, "it.Error()=%v, want nil");
+        assert_eq!(it.err().is_none(), true, "it.Error()=%v, want nil");
     }
 
     const TWO_HOURS_DATA: [f64; 120] = [
@@ -348,12 +348,12 @@ mod tests {
         for w in &TWO_HOURS_DATA {
             assert_eq!(it.next(), true, "Next()=false for {}, want true", *w);
 
-            let vv = it.values();
+            let vv = it.read();
             assert_eq!(*w, vv, "Values()=({}), want ({})\n", vv, *w);
         }
 
         assert_eq!(it.next(), false, "Next()=true .., want false");
-        assert_eq!(it.error().is_none(), true, "it.Error()=%v, want nil");
+        assert_eq!(it.err().is_none(), true, "it.Error()=%v, want nil");
     }
 
     #[test]
@@ -2877,12 +2877,12 @@ mod tests {
             for w in &v {
                 assert_eq!(it.next(), true, "Next()=false for {}, want true", *w);
 
-                let vv = it.values();
+                let vv = it.read();
                 assert_eq!(*w, vv, "Values()=({}), want ({})\n", vv, *w);
             }
 
             assert_eq!(it.next(), false, "Next()=true .., want false");
-            assert_eq!(it.error().is_none(), true, "it.Error()=%v, want nil");
+            assert_eq!(it.err().is_none(), true, "it.Error()=%v, want nil");
         }
     }
 }

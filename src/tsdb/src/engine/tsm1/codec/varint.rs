@@ -1,5 +1,7 @@
 use crate::engine::tsm1::codec::zigzag;
 
+pub const MAX_VARINT_LEN64: usize = 10;
+
 /// Most-significant byte, == 0x80
 pub const MSB: u8 = 0b1000_0000;
 /// All bits except for the most significant. Can be used as bitmask to drop the most-signficant
@@ -45,11 +47,13 @@ pub trait VarInt: Sized + Copy {
 
     /// Helper: Encode a value and return the encoded form as Vec. The Vec must be at least
     /// `required_space()` bytes long.
-    fn encode_var_vec(self) -> Vec<u8> {
-        let mut v = Vec::new();
-        v.resize(self.required_space(), 0);
-        self.encode_var(&mut v);
-        v
+    fn encode_var_vec(self, buf: &mut Vec<u8>) -> usize {
+        let lower = buf.len();
+        let required = self.required_space();
+        let upper = lower + required;
+        buf.resize(upper, 0);
+        self.encode_var(&mut buf[lower..upper]);
+        required
     }
 }
 

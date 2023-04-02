@@ -5,9 +5,10 @@
 
 //! Note: an uncompressed format is not yet implemented.
 
-use anyhow::anyhow;
+use std::sync::Arc;
 
 use crate::engine::tsm1::codec::varint::VarInt;
+use crate::engine::tsm1::codec::{Decoder, Encoder};
 
 /// STRING_COMPRESSED_SNAPPY is a compressed encoding using Snappy compression
 const STRING_COMPRESSED_SNAPPY: u8 = 1;
@@ -25,20 +26,23 @@ impl StringEncoder {
             bytes: Vec::with_capacity(sz),
         }
     }
+}
 
-    /// Write encodes s to the underlying buffer.
-    pub fn write(&mut self, s: &str) {
+impl<'a> Encoder<&'a [u8]> for StringEncoder {
+    fn write(&mut self, v: &'a [u8]) {
         let mut b = [0; 10];
 
         // Append the length of the string using variable byte encoding
-        let i = (s.len() as u64).encode_var(&mut b);
+        let i = (v.len() as u64).encode_var(&mut b);
         self.bytes.extend_from_slice(&b[..i]);
 
         // Append the string bytes
-        self.bytes.extend_from_slice(s.as_bytes());
+        self.bytes.extend_from_slice(v);
     }
 
-    pub fn bytes(&mut self) -> anyhow::Result<Vec<u8>> {
+    fn flush(&mut self) {}
+
+    fn bytes(&mut self) -> anyhow::Result<Vec<u8>> {
         let max_encoded_len = snap::raw::max_compress_len(self.bytes.len());
         if max_encoded_len == 0 {
             return Err(anyhow!("source length too large"));
@@ -62,7 +66,7 @@ impl StringEncoder {
 
 /// StringDecoder decodes a byte slice into strings.
 pub struct StringDecoder {
-    b: Vec<u8>,
+    b: Arc<Vec<u8>>,
     l: usize,
     i: usize,
 
@@ -86,40 +90,13 @@ impl StringDecoder {
         let decoded_bytes = decoder.decompress_vec(&b[1..]).map_err(|e| anyhow!(e))?;
 
         Ok(Self {
-            b: decoded_bytes,
+            b: Arc::new(decoded_bytes),
             l: 0,
             i: 0,
             lower: 0,
             upper: 0,
             err: None,
         })
-    }
-
-    /// Next returns true if there are any values remaining to be decoded.
-    pub fn next(&mut self) -> bool {
-        if self.err.is_some() {
-            return false;
-        }
-
-        self.i += self.l;
-        let b = self.i < self.b.len();
-        if !b {
-            return b;
-        }
-
-        let r = self.read_range();
-        return match r {
-            Ok((lower, upper)) => {
-                self.lower = lower;
-                self.upper = upper;
-
-                true
-            }
-            Err(e) => {
-                self.err = Some(e);
-                false
-            }
-        };
     }
 
     /// Read returns the next value from the decoder.
@@ -152,16 +129,68 @@ impl StringDecoder {
         Ok((lower, upper))
     }
 
-    pub fn read(&self) -> &[u8] {
-        &self.b[self.lower..self.upper]
+    pub fn read_string(&self) -> anyhow::Result<String> {
+        let ref_data = self.read();
+        String::from_utf8(ref_data.as_slice().to_vec()).map_err(|e| anyhow!(e))
+        // std::str::from_utf8(ref_data.as_slice()).map_err(|e| anyhow!(e))
+    }
+}
+
+impl Decoder<Ref> for StringDecoder {
+    fn next(&mut self) -> bool {
+        if self.err.is_some() {
+            return false;
+        }
+
+        self.i += self.l;
+        let b = self.i < self.b.len();
+        if !b {
+            return b;
+        }
+
+        let r = self.read_range();
+        return match r {
+            Ok((lower, upper)) => {
+                self.lower = lower;
+                self.upper = upper;
+
+                true
+            }
+            Err(e) => {
+                self.err = Some(e);
+                false
+            }
+        };
     }
 
-    pub fn read_str(&self) -> anyhow::Result<&str> {
-        std::str::from_utf8(self.read()).map_err(|e| anyhow!(e))
+    fn read(&self) -> Ref {
+        Ref {
+            buf: self.b.clone(),
+            lower: self.lower,
+            upper: self.upper,
+        }
+        // & self.b[self.lower..self.upper]
     }
 
-    pub fn err(&self) -> Option<&anyhow::Error> {
+    fn err(&self) -> Option<&anyhow::Error> {
         self.err.as_ref()
+    }
+}
+
+#[derive(Clone)]
+pub struct Ref {
+    buf: Arc<Vec<u8>>,
+    lower: usize,
+    upper: usize,
+}
+
+impl Ref {
+    pub fn as_slice(&self) -> &[u8] {
+        &self.buf.as_ref()[self.lower..self.upper]
+    }
+
+    pub fn to_vec(&self) -> Vec<u8> {
+        self.as_slice().to_vec()
     }
 }
 
@@ -170,16 +199,17 @@ mod tests {
     use crate::engine::tsm1::codec::string::{
         StringDecoder, StringEncoder, STRING_COMPRESSED_SNAPPY,
     };
+    use crate::engine::tsm1::codec::{Decoder, Encoder};
 
     #[test]
     fn test_string_encoder_no_values() {
         let mut enc = StringEncoder::new(1024);
         let b = enc.bytes().unwrap();
 
-        let dec_r = StringDecoder::new(b.as_slice());
+        let mut dec = StringDecoder::new(b.as_slice()).unwrap();
         assert_eq!(
-            dec_r.is_err(),
-            true,
+            dec.next(),
+            false,
             "unexpected next value: got true, exp false"
         );
     }
@@ -188,7 +218,7 @@ mod tests {
     fn test_string_encoder_single() {
         let mut enc = StringEncoder::new(1024);
         let v1 = "v1";
-        enc.write(v1);
+        enc.write(v1.as_bytes());
 
         let b = enc.bytes().unwrap();
 
@@ -199,10 +229,10 @@ mod tests {
             "unexpected next value: got false, exp true"
         );
         assert_eq!(
-            dec.read_str().unwrap(),
+            dec.read_string().unwrap(),
             v1,
             "unexpected value: got {}, exp {}",
-            dec.read_str().unwrap(),
+            dec.read_string().unwrap(),
             v1
         )
     }
@@ -214,7 +244,7 @@ mod tests {
         let mut values = Vec::with_capacity(10);
         for i in 0..10 {
             values.push(format!("value {}", i));
-            enc.write(values[i].as_str());
+            enc.write(values[i].as_bytes());
         }
 
         let b = enc.bytes().unwrap();
@@ -243,11 +273,11 @@ mod tests {
                 "unexpected next value: got false, exp true"
             );
             assert_eq!(
-                dec.read_str().unwrap(),
+                dec.read_string().unwrap(),
                 v.as_str(),
                 "unexpected value at pos {}: got {}, exp {}",
                 i,
-                dec.read_str().unwrap(),
+                dec.read_string().unwrap(),
                 v.as_str()
             );
         }

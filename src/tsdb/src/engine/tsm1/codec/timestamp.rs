@@ -30,11 +30,10 @@
 //!
 //! For uncompressed encoding, the delta values are stored using 8 bytes each.
 
-use anyhow::anyhow;
 use bytes::BufMut;
 
-use crate::engine::tsm1::codec::simple8b;
 use crate::engine::tsm1::codec::varint::VarInt;
+use crate::engine::tsm1::codec::{simple8b, Decoder, Encoder};
 
 /// TIME_UNCOMPRESSED is an uncompressed format using 8 bytes per timestamp
 const TIME_UNCOMPRESSED: u8 = 0;
@@ -55,11 +54,6 @@ impl TimeEncoder {
             ts: Vec::with_capacity(sz),
             enc: simple8b::Encoder::new(),
         }
-    }
-
-    /// Write adds a timestamp to the compressed stream.
-    pub fn write(&mut self, t: i64) {
-        self.ts.push(t as u64);
     }
 
     fn reduce(&mut self) -> (u64, u64, bool) {
@@ -95,28 +89,6 @@ impl TimeEncoder {
         }
 
         return (max, divisor, rle);
-    }
-
-    pub fn bytes(&mut self) -> anyhow::Result<Vec<u8>> {
-        if self.ts.len() == 0 {
-            return Ok(vec![]);
-        }
-
-        // Maximum and largest common divisor.  rle is true if dts (the delta timestamps),
-        // are all the same.
-        let (max, div, rle) = self.reduce();
-
-        // The deltas are all the same, so we can run-length encode them
-        if rle && self.ts.len() > 1 {
-            return self.encode_rle(self.ts[0], self.ts[1], div);
-        }
-
-        // We can't compress this time-range, the deltas exceed 1 << 60
-        if max > simple8b::MAX_VALUE {
-            return self.encode_raw();
-        }
-
-        return self.encode_packed(div);
     }
 
     fn encode_packed(&mut self, div: u64) -> anyhow::Result<Vec<u8>> {
@@ -195,11 +167,34 @@ impl TimeEncoder {
     }
 }
 
-/// IntegerDecoder decodes a byte slice into int64s.
-pub trait Decoder {
-    fn next(&mut self) -> bool;
-    fn read(&self) -> i64;
-    fn err(&self) -> Option<&anyhow::Error>;
+impl Encoder<i64> for TimeEncoder {
+    fn write(&mut self, v: i64) {
+        self.ts.push(v as u64);
+    }
+
+    fn flush(&mut self) {}
+
+    fn bytes(&mut self) -> anyhow::Result<Vec<u8>> {
+        if self.ts.len() == 0 {
+            return Ok(vec![]);
+        }
+
+        // Maximum and largest common divisor.  rle is true if dts (the delta timestamps),
+        // are all the same.
+        let (max, div, rle) = self.reduce();
+
+        // The deltas are all the same, so we can run-length encode them
+        if rle && self.ts.len() > 1 {
+            return self.encode_rle(self.ts[0], self.ts[1], div);
+        }
+
+        // We can't compress this time-range, the deltas exceed 1 << 60
+        if max > simple8b::MAX_VALUE {
+            return self.encode_raw();
+        }
+
+        return self.encode_packed(div);
+    }
 }
 
 pub enum TimeDecoder<'a> {
@@ -233,7 +228,7 @@ impl<'a> TimeDecoder<'a> {
     }
 }
 
-impl<'a> Decoder for TimeDecoder<'a> {
+impl<'a> Decoder<i64> for TimeDecoder<'a> {
     fn next(&mut self) -> bool {
         match self {
             Self::RleDecoder(d) => d.next(),
@@ -264,7 +259,7 @@ impl<'a> Decoder for TimeDecoder<'a> {
 
 pub struct EmptyDecoder {}
 
-impl Decoder for EmptyDecoder {
+impl<'a> Decoder<i64> for EmptyDecoder {
     fn next(&mut self) -> bool {
         false
     }
@@ -324,7 +319,7 @@ impl RleDecoder {
     }
 }
 
-impl Decoder for RleDecoder {
+impl<'a> Decoder<i64> for RleDecoder {
     fn next(&mut self) -> bool {
         self.step += 1;
 
@@ -391,7 +386,7 @@ impl<'a> PackedDecoder<'a> {
     }
 }
 
-impl<'a> Decoder for PackedDecoder<'a> {
+impl<'a> Decoder<i64> for PackedDecoder<'a> {
     fn next(&mut self) -> bool {
         if self.err.is_some() {
             return false;
@@ -486,7 +481,7 @@ impl<'a> UncompressedDecoder<'a> {
     }
 }
 
-impl<'a> Decoder for UncompressedDecoder<'a> {
+impl<'a> Decoder<i64> for UncompressedDecoder<'a> {
     fn next(&mut self) -> bool {
         if self.b_step == 0 {
             self.b_step += 8;
@@ -518,6 +513,44 @@ impl<'a> Decoder for UncompressedDecoder<'a> {
     }
 }
 
+pub fn count_timestamps(b: &[u8]) -> anyhow::Result<usize> {
+    if b.len() == 0 {
+        return Err(anyhow!("count_timestamps: no data found"));
+    }
+
+    // Encoding type is stored in the 4 high bits of the first byte
+    let encoding = b[0] >> 4;
+    match encoding {
+        TIME_UNCOMPRESSED => {
+            // Uncompressed timestamps are just 8 bytes each
+            Ok((b.len() - 1) / 8)
+        }
+        TIME_COMPRESSED_RLE => {
+            // First 9 bytes are the starting timestamp and scaling factor, skip over them
+            let mut i = 9;
+            // Next 1-10 bytes is our (scaled down by factor of 10) run length values
+            let (_, n) = u64::decode_var(&b[i..])
+                .ok_or(anyhow!("count_timestamps: can not decode delta"))?;
+            i += n;
+            // Last 1-10 bytes is how many times the value repeats
+            let (count, _) = u64::decode_var(&b[i..])
+                .ok_or(anyhow!("count_timestamps: can not decode repeat"))?;
+
+            Ok(count as usize)
+        }
+        TIME_COMPRESSED_PACKED_SIMPLE => {
+            // First 9 bytes are the starting timestamp and scaling factor, skip over them
+            let count = simple8b::count_bytes(&b[9..])?;
+            // +1 is for the first uncompressed timestamp, starting timestamp in b[1:9]
+            Ok(count + 1)
+        }
+        _ => Err(anyhow!(
+            "count_timestamps: unsupported encoding {}",
+            encoding
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::ops::Add;
@@ -529,6 +562,7 @@ mod tests {
         Decoder, TimeDecoder, TimeEncoder, TIME_COMPRESSED_PACKED_SIMPLE, TIME_COMPRESSED_RLE,
         TIME_UNCOMPRESSED,
     };
+    use crate::engine::tsm1::codec::Encoder;
 
     #[test]
     fn test_time_encoder() {

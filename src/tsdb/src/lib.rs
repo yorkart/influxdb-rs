@@ -1,5 +1,7 @@
 #[macro_use]
 extern crate trait_enum;
+#[macro_use]
+extern crate anyhow;
 extern crate core;
 
 pub mod cache;

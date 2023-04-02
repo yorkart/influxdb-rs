@@ -3,9 +3,8 @@
 //! how many booleans are packed in the slice.  The remaining bytes contains 1 byte for every
 //! 8 boolean values encoded.
 
-use anyhow::anyhow;
-
 use crate::engine::tsm1::codec::varint::VarInt;
+use crate::engine::tsm1::codec::{Decoder, Encoder};
 
 /// Note: an uncompressed boolean format is not yet implemented.
 /// BOOLEAN_COMPRESSED_BIT_PACKED is a bit packed format using 1 bit per boolean
@@ -37,11 +36,28 @@ impl BooleanEncoder {
         }
     }
 
+    fn flush_bytes(&mut self) {
+        // Pad remaining byte w/ 0s
+        while self.i < 8 {
+            self.b = self.b << 1;
+            self.i += 1;
+        }
+
+        // If we have bits set, append them to the byte slice
+        if self.i > 0 {
+            self.bytes.push(self.b);
+            self.b = 0;
+            self.i = 0;
+        }
+    }
+}
+
+impl Encoder<bool> for BooleanEncoder {
     /// Write encodes b to the underlying buffer.
-    pub fn write(&mut self, b: bool) {
+    fn write(&mut self, b: bool) {
         // If we have filled the current byte, flush it
         if self.i >= 8 {
-            self.flush();
+            self.flush_bytes();
         }
 
         // Use 1 bit for each boolean value, shift the current byte
@@ -57,24 +73,11 @@ impl BooleanEncoder {
         self.n += 1;
     }
 
-    fn flush(&mut self) {
-        // Pad remaining byte w/ 0s
-        while self.i < 8 {
-            self.b = self.b << 1;
-            self.i += 1;
-        }
+    fn flush(&mut self) {}
 
-        // If we have bits set, append them to the byte slice
-        if self.i > 0 {
-            self.bytes.push(self.b);
-            self.b = 0;
-            self.i = 0;
-        }
-    }
-
-    pub fn bytes(&mut self) -> anyhow::Result<Vec<u8>> {
+    fn bytes(&mut self) -> anyhow::Result<Vec<u8>> {
         // Ensure the current byte is flushed
-        self.flush();
+        self.flush_bytes();
         let mut b = Vec::with_capacity(10 + 1);
 
         // Store the encoding type in the 4 high bits of the first byte
@@ -121,17 +124,15 @@ impl<'a> BooleanDecoder<'a> {
             n: count as usize,
         })
     }
+}
 
-    // Next returns whether there are any bits remaining in the decoder.
-    // It returns false if there was an error decoding.
-    // The error is available on the Error method.
-    pub fn next(&mut self) -> bool {
+impl<'a> Decoder<bool> for BooleanDecoder<'a> {
+    fn next(&mut self) -> bool {
         self.i += 1;
         self.i < self.n as isize
     }
 
-    /// Read returns the next bit from the decoder.
-    pub fn read(&mut self) -> bool {
+    fn read(&self) -> bool {
         // Index into the byte slice
         let idx = self.i >> 3; // integer division by 8
 
@@ -149,7 +150,7 @@ impl<'a> BooleanDecoder<'a> {
     }
 
     #[inline]
-    pub fn err(&self) -> Option<&anyhow::Error> {
+    fn err(&self) -> Option<&anyhow::Error> {
         None
     }
 }
@@ -157,6 +158,7 @@ impl<'a> BooleanDecoder<'a> {
 #[cfg(test)]
 mod tests {
     use crate::engine::tsm1::codec::boolean::{BooleanDecoder, BooleanEncoder};
+    use crate::engine::tsm1::codec::{Decoder, Encoder};
 
     #[test]
     fn test_time_encoder() {
