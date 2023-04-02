@@ -1,6 +1,8 @@
 
 [workspace]
 members = [
+    "src/common",
+    "src/influxql",
     "src/tsdb",
     "src/query",
     "src/utils",

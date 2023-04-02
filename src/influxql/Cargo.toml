@@ -1,0 +1,18 @@
+[package]
+name = "influxdb-influxql"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "influxdb_influxql"
+
+[dependencies] # In alphabetical order
+nom = { version = "7", default-features = false, features = ["std"] }
+once_cell = "1"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+chrono-tz = { version = "0.8" }
+num-traits = "0.2"
+
+[dev-dependencies] # In alphabetical order
+assert_matches = "1"
+insta = { version = "1.29.0", features = ["yaml"] }
