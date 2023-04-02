@@ -21,7 +21,7 @@ impl Number for u64 {
 
 #[cfg(test)]
 mod tests {
-    use crate::engine::tsm1::encoding::number_encoder::Number;
+    use crate::engine::tsm1::codec::number::Number;
 
     #[test]
     fn test_u64() {

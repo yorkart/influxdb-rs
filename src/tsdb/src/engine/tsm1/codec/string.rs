@@ -7,7 +7,7 @@
 
 use anyhow::anyhow;
 
-use crate::engine::tsm1::encoding::varint_encoder::VarInt;
+use crate::engine::tsm1::codec::varint::VarInt;
 
 /// STRING_COMPRESSED_SNAPPY is a compressed encoding using Snappy compression
 const STRING_COMPRESSED_SNAPPY: u8 = 1;
@@ -167,7 +167,7 @@ impl StringDecoder {
 
 #[cfg(test)]
 mod tests {
-    use crate::engine::tsm1::encoding::string_encoder::{
+    use crate::engine::tsm1::codec::string::{
         StringDecoder, StringEncoder, STRING_COMPRESSED_SNAPPY,
     };
 

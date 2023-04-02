@@ -162,10 +162,13 @@ struct Packing {
     pub n: usize,
     pub bit: usize,
     pub unpack: fn(u64, &mut [u64]),
+
+    #[allow(dead_code)]
     pub pack: fn(&[u64]) -> u64,
 }
 
 impl Packing {
+    #[allow(dead_code)]
     pub fn new(n: usize, bit: usize, unpack: fn(u64, &mut [u64]), pack: fn(&[u64]) -> u64) -> Self {
         Self {
             n,
@@ -999,7 +1002,7 @@ fn unpack1(v: u64, dst: &mut [u64]) {
 
 #[cfg(test)]
 mod tests {
-    use crate::engine::tsm1::encoding::simple8b_encoder::{
+    use crate::engine::tsm1::codec::simple8b::{
         count_bytes, count_bytes_between, decode_all, encode_all, Decoder, Encoder,
     };
 

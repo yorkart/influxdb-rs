@@ -7,10 +7,8 @@
 
 use anyhow::anyhow;
 
-use crate::engine::tsm1::encoding::bit_encoder;
-use crate::engine::tsm1::encoding::bit_encoder::{
-    Bit, BufferedReader, BufferedWriter, Read, Write,
-};
+use crate::engine::tsm1::codec::bit;
+use crate::engine::tsm1::codec::bit::{Bit, BufferedReader, BufferedWriter, Read, Write};
 
 /// Note: an uncompressed format is not yet implemented.
 /// FLOAT_COMPRESSED_GORILLA is a compressed format using the gorilla paper encoding
@@ -165,7 +163,7 @@ impl<'a> FloatDecoder<'a> {
         })
     }
 
-    fn next_value(&mut self) -> Result<u64, bit_encoder::Error> {
+    fn next_value(&mut self) -> Result<u64, bit::Error> {
         // read compressed value
         let bit = self.br.as_mut().unwrap().read_bit()?;
 
@@ -247,7 +245,7 @@ impl<'a> FloatDecoder<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::engine::tsm1::encoding::float_encoder::{FloatDecoder, FloatEncoder};
+    use crate::engine::tsm1::codec::float::{FloatDecoder, FloatEncoder};
 
     #[test]
     fn test_float_encoder_simple() {

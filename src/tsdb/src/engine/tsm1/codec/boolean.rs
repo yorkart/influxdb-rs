@@ -5,7 +5,7 @@
 
 use anyhow::anyhow;
 
-use crate::engine::tsm1::encoding::varint_encoder::VarInt;
+use crate::engine::tsm1::codec::varint::VarInt;
 
 /// Note: an uncompressed boolean format is not yet implemented.
 /// BOOLEAN_COMPRESSED_BIT_PACKED is a bit packed format using 1 bit per boolean
@@ -156,7 +156,7 @@ impl<'a> BooleanDecoder<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::engine::tsm1::encoding::bool_encoder::{BooleanDecoder, BooleanEncoder};
+    use crate::engine::tsm1::codec::boolean::{BooleanDecoder, BooleanEncoder};
 
     #[test]
     fn test_time_encoder() {

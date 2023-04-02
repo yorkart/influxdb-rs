@@ -21,10 +21,10 @@
 use anyhow::anyhow;
 use bytes::BufMut;
 
-use crate::engine::tsm1::encoding::simple8b_encoder;
-use crate::engine::tsm1::encoding::varint_encoder::VarInt;
-use crate::engine::tsm1::encoding::zigzag_encoder::zig_zag_decode;
-use crate::engine::tsm1::encoding::zigzag_encoder::zig_zag_encode;
+use crate::engine::tsm1::codec::simple8b;
+use crate::engine::tsm1::codec::varint::VarInt;
+use crate::engine::tsm1::codec::zigzag::zig_zag_decode;
+use crate::engine::tsm1::codec::zigzag::zig_zag_encode;
 
 /// INT_UNCOMPRESSED is an uncompressed format using 8 bytes per point
 const INT_UNCOMPRESSED: u8 = 0;
@@ -83,7 +83,7 @@ impl IntegerEncoder {
 
         for v in self.values.as_slice() {
             // Value is too large to encode using packed format
-            if *v > simple8b_encoder::MAX_VALUE {
+            if *v > simple8b::MAX_VALUE {
                 return self.encode_uncompressed();
             }
         }
@@ -122,7 +122,7 @@ impl IntegerEncoder {
         // Encode all but the first value.  Fist value is written unencoded
         // using 8 bytes.
         let encoded = {
-            let sz = simple8b_encoder::encode_all(self.values[1..].as_mut())?;
+            let sz = simple8b::encode_all(self.values[1..].as_mut())?;
             &self.values[1..sz + 1]
         };
 
@@ -374,7 +374,7 @@ impl<'a> Decoder for PackedDecoder<'a> {
         }
 
         let v = u64::from_be_bytes(self.bytes[self.b_step..self.b_step + 8].try_into().unwrap());
-        let r = simple8b_encoder::decode(self.values.as_mut(), v);
+        let r = simple8b::decode(self.values.as_mut(), v);
         if r.is_err() {
             // Should never happen, only error that could be returned is if the the value to be decoded was not
             // actually encoded by simple8b encoder.
@@ -476,7 +476,7 @@ impl<'a> Decoder for UncompressedDecoder<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::engine::tsm1::encoding::int_encoder::{
+    use crate::engine::tsm1::codec::integer::{
         Decoder, IntegerDecoder, IntegerEncoder, INT_COMPRESSED_RLE, INT_COMPRESSED_SIMPLE,
         INT_UNCOMPRESSED,
     };

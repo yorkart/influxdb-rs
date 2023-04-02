@@ -1,16 +1,16 @@
 use influxdb_utils::time::{time_format, unix_nano_to_time};
 
-pub mod bit_encoder;
-pub mod simple8b_encoder;
-pub mod varint_encoder;
-pub mod zigzag_encoder;
+pub mod bit;
+pub mod simple8b;
+pub mod varint;
+pub mod zigzag;
 
-pub mod bool_encoder;
-pub mod float_encoder;
-pub mod int_encoder;
-pub mod number_encoder;
-pub mod string_encoder;
-pub mod timestamp_encoder;
+pub mod boolean;
+pub mod float;
+pub mod integer;
+// pub mod number;
+pub mod string;
+pub mod timestamp;
 
 /// BLOCK_FLOAT64 designates a block encodes float64 values.
 pub const BLOCK_FLOAT64: i8 = 0;
