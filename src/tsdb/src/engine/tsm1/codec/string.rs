@@ -28,8 +28,8 @@ impl StringEncoder {
     }
 }
 
-impl<'a> Encoder<&'a [u8]> for StringEncoder {
-    fn write(&mut self, v: &'a [u8]) {
+impl Encoder<Vec<u8>> for StringEncoder {
+    fn write(&mut self, v: Vec<u8>) {
         let mut b = [0; 10];
 
         // Append the length of the string using variable byte encoding
@@ -37,7 +37,7 @@ impl<'a> Encoder<&'a [u8]> for StringEncoder {
         self.bytes.extend_from_slice(&b[..i]);
 
         // Append the string bytes
-        self.bytes.extend_from_slice(v);
+        self.bytes.extend_from_slice(v.as_slice());
     }
 
     fn flush(&mut self) {}
@@ -66,7 +66,7 @@ impl<'a> Encoder<&'a [u8]> for StringEncoder {
 
 /// StringDecoder decodes a byte slice into strings.
 pub struct StringDecoder {
-    b: Arc<Vec<u8>>,
+    b: Vec<u8>,
     l: usize,
     i: usize,
 
@@ -90,7 +90,7 @@ impl StringDecoder {
         let decoded_bytes = decoder.decompress_vec(&b[1..]).map_err(|e| anyhow!(e))?;
 
         Ok(Self {
-            b: Arc::new(decoded_bytes),
+            b: decoded_bytes,
             l: 0,
             i: 0,
             lower: 0,
@@ -136,7 +136,7 @@ impl StringDecoder {
     }
 }
 
-impl Decoder<Ref> for StringDecoder {
+impl Decoder<Vec<u8>> for StringDecoder {
     fn next(&mut self) -> bool {
         if self.err.is_some() {
             return false;
@@ -163,12 +163,13 @@ impl Decoder<Ref> for StringDecoder {
         };
     }
 
-    fn read(&self) -> Ref {
-        Ref {
-            buf: self.b.clone(),
-            lower: self.lower,
-            upper: self.upper,
-        }
+    fn read(&self) -> Vec<u8> {
+        self.b[self.lower..self.upper].to_vec()
+        // Ref {
+        //     buf: self.b.clone(),
+        //     lower: self.lower,
+        //     upper: self.upper,
+        // }
         // & self.b[self.lower..self.upper]
     }
 
@@ -218,7 +219,7 @@ mod tests {
     fn test_string_encoder_single() {
         let mut enc = StringEncoder::new(1024);
         let v1 = "v1";
-        enc.write(v1.as_bytes());
+        enc.write(v1.as_bytes().to_vec());
 
         let b = enc.bytes().unwrap();
 
@@ -244,7 +245,7 @@ mod tests {
         let mut values = Vec::with_capacity(10);
         for i in 0..10 {
             values.push(format!("value {}", i));
-            enc.write(values[i].as_bytes());
+            enc.write(values[i].as_bytes().to_vec());
         }
 
         let b = enc.bytes().unwrap();

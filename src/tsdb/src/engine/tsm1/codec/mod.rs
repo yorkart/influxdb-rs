@@ -9,6 +9,7 @@ pub mod integer;
 // pub mod number;
 pub mod string;
 pub mod timestamp;
+pub mod unsigned;
 
 pub trait Encoder<T> {
     fn write(&mut self, v: T);
