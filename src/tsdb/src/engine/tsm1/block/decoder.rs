@@ -12,7 +12,7 @@ use crate::engine::tsm1::codec::timestamp::TimeDecoder;
 use crate::engine::tsm1::codec::unsigned::UnsignedDecoder;
 use crate::engine::tsm1::codec::varint::VarInt;
 use crate::engine::tsm1::codec::{timestamp, Decoder};
-use crate::engine::tsm1::encoding::{Value, Values};
+use crate::engine::tsm1::encoding::{Capacity, Value, Values};
 
 pub fn decode_block(block: &[u8]) -> anyhow::Result<Values> {
     if block.len() <= ENCODED_BLOCK_HEADER_SIZE {
@@ -77,6 +77,7 @@ fn decode_block_using<T>(
 ) -> anyhow::Result<Vec<Value<T>>>
 where
     T: Debug + Clone + PartialOrd + PartialEq,
+    Value<T>: Capacity,
 {
     let mut values = Vec::with_capacity(sz);
     for _ in 0..sz {

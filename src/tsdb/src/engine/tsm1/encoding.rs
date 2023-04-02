@@ -18,81 +18,79 @@ where
     }
 }
 
-/// Values describes the various types of block data that can be held within a TSM file.
-#[derive(Debug, Clone, PartialEq, PartialOrd)]
-pub enum Values {
-    Float(Vec<Value<f64>>),
-    Integer(Vec<Value<i64>>),
-    Bool(Vec<Value<bool>>),
-    Str(Vec<Value<Vec<u8>>>),
-    Unsigned(Vec<Value<u64>>),
+pub trait Capacity {
+    fn encode_size(&self) -> usize;
 }
 
-impl Values {
-    pub fn min_time(&self) -> i64 {
-        match self {
-            Self::Float(values) => values[0].unix_nano,
-            Self::Integer(values) => values[0].unix_nano,
-            Self::Bool(values) => values[0].unix_nano,
-            Self::Str(values) => values[0].unix_nano,
-            Self::Unsigned(values) => values[0].unix_nano,
-        }
+impl Capacity for Value<f64> {
+    fn encode_size(&self) -> usize {
+        16
+    }
+}
+
+impl Capacity for Value<i64> {
+    fn encode_size(&self) -> usize {
+        16
+    }
+}
+
+impl Capacity for Value<u64> {
+    fn encode_size(&self) -> usize {
+        16
+    }
+}
+
+impl Capacity for Value<bool> {
+    fn encode_size(&self) -> usize {
+        9
+    }
+}
+
+impl Capacity for Value<Vec<u8>> {
+    fn encode_size(&self) -> usize {
+        8 + self.value.len()
+    }
+}
+
+pub trait TValues {
+    fn min_time(&self) -> i64;
+    fn max_time(&self) -> i64;
+    fn size(&self) -> usize;
+    fn ordered(&self) -> bool;
+    fn deduplicate(self) -> Self;
+    fn exclude(self, min: i64, max: i64) -> Self;
+    fn include(self, min: i64, max: i64) -> Self;
+    fn find_range(&self, min: i64, max: i64) -> (isize, isize);
+    fn merge(self, b: Self) -> Self;
+}
+
+pub type TypeValue<T> = Vec<Value<T>>;
+
+impl<T> TValues for TypeValue<T>
+where
+    T: Debug + Clone + PartialOrd + PartialEq,
+    Value<T>: Capacity,
+{
+    fn min_time(&self) -> i64 {
+        self[0].unix_nano
     }
 
-    pub fn max_time(&self) -> i64 {
-        match self {
-            Self::Float(values) => values[values.len() - 1].unix_nano,
-            Self::Integer(values) => values[values.len() - 1].unix_nano,
-            Self::Bool(values) => values[values.len() - 1].unix_nano,
-            Self::Str(values) => values[values.len() - 1].unix_nano,
-            Self::Unsigned(values) => values[values.len() - 1].unix_nano,
-        }
+    fn max_time(&self) -> i64 {
+        self[self.len() - 1].unix_nano
     }
 
-    pub fn size(&self) -> usize {
-        let mut sz = 0;
-        match self {
-            Self::Float(values) => {
-                for _i in 0..values.len() {
-                    sz += 16
-                }
-            }
-            Self::Integer(values) => {
-                for _i in 0..values.len() {
-                    sz += 16
-                }
-            }
-            Self::Bool(values) => {
-                for _i in 0..values.len() {
-                    sz += 9
-                }
-            }
-            Self::Str(values) => {
-                for v in values {
-                    sz += 8 + v.value.len();
-                }
-            }
-            Self::Unsigned(values) => {
-                for _i in 0..values.len() {
-                    sz += 16
-                }
-            }
-        };
-
-        sz
+    fn size(&self) -> usize {
+        self.iter().map(|x| x.encode_size()).sum()
     }
 
-    fn ordered_values<T>(values: &[Value<T>]) -> bool
-    where
-        T: Debug + Clone + PartialOrd + PartialEq,
-    {
-        if values.len() <= 1 {
+    fn ordered(&self) -> bool {
+        if self.len() <= 1 {
             return true;
         }
 
-        for i in 1..values.len() {
-            let a = values[i - 1].unix_nano;
-            let b = values[i].unix_nano;
+        for i in 1..self.len() {
+            let a = self[i - 1].unix_nano;
+            let b = self[i].unix_nano;
             if a >= b {
                 return false;
             }
@@ -100,107 +98,63 @@ impl Values {
         return true;
     }
 
-    fn ordered(&self) -> bool {
-        match self {
-            Self::Float(values) => Self::ordered_values(values),
-            Self::Integer(values) => Self::ordered_values(values),
-            Self::Bool(values) => Self::ordered_values(values),
-            Self::Str(values) => Self::ordered_values(values),
-            Self::Unsigned(values) => Self::ordered_values(values),
-        }
-    }
-
-    fn deduplicate_values<T>(mut values: Vec<Value<T>>) -> Vec<Value<T>>
-    where
-        T: Debug + Clone + PartialOrd + PartialEq,
-    {
-        if values.len() <= 1 {
-            return values;
+    fn deduplicate(mut self) -> Self {
+        if self.len() <= 1 {
+            return self;
         }
 
-        if Self::ordered_values(values.as_slice()) {
-            return values;
+        if self.ordered() {
+            return self;
         }
 
-        values.sort_by(|x, y| x.unix_nano.cmp(&y.unix_nano));
+        self.sort_by(|x, y| x.unix_nano.cmp(&y.unix_nano));
         let mut i = 0;
-        for j in 1..values.len() {
-            let v = &values[j];
-            if v.unix_nano != values[i].unix_nano {
+        for j in 1..self.len() {
+            let v = &self[j];
+            if v.unix_nano != self[i].unix_nano {
                 i += 1;
             }
-            values[i] = v.clone();
+            self[i] = v.clone();
         }
 
         i += 1;
-        if i == values.len() {
-            return values;
+        if i == self.len() {
+            return self;
         }
 
-        values.truncate(i);
-        values
+        self.truncate(i);
+        self
     }
 
-    /// Deduplicate returns a new slice with any values that have the same timestamp removed.
-    /// The Value that appears last in the slice is the one that is kept.  The returned
-    /// Values are sorted if necessary.
-    pub fn deduplicate(self) -> Self {
-        match self {
-            Self::Float(values) => Self::Float(Self::deduplicate_values(values)),
-            Self::Integer(values) => Self::Integer(Self::deduplicate_values(values)),
-            Self::Bool(values) => Self::Bool(Self::deduplicate_values(values)),
-            Self::Str(values) => Self::Str(Self::deduplicate_values(values)),
-            Self::Unsigned(values) => Self::Unsigned(Self::deduplicate_values(values)),
-        }
-    }
-
-    fn exclude_values<T>(mut values: Vec<Value<T>>, min: i64, max: i64) -> Vec<Value<T>>
-    where
-        T: Debug + Clone + PartialOrd + PartialEq,
-    {
-        let (rmin, mut rmax) = Self::find_range_values(values.as_slice(), min, max);
+    fn exclude(mut self, min: i64, max: i64) -> Self {
+        let (rmin, mut rmax) = self.find_range(min, max);
         if rmin == -1 && rmax == -1 {
-            return values;
+            return self;
         }
 
         // a[rmin].UnixNano() ≥ min
         // a[rmax].UnixNano() ≥ max
 
-        if rmax < values.len() as isize {
-            if values[rmax as usize].unix_nano == max {
+        if rmax < self.len() as isize {
+            if self[rmax as usize].unix_nano == max {
                 rmax += 1;
             }
-            let rest = values.len() as isize - rmax;
+            let rest = self.len() as isize - rmax;
             if rest > 0 {
-                let right = values[rmax as usize..].to_vec();
-                values.truncate((rmin + rest) as usize);
-                values.extend_from_slice(right.as_slice());
+                let right = self[rmax as usize..].to_vec();
+                self.truncate((rmin + rest) as usize);
+                self.extend_from_slice(right.as_slice());
 
-                return values;
+                return self;
             }
         }
 
-        values.truncate(rmin as usize);
-        values
+        self.truncate(rmin as usize);
+        self
     }
 
-    /// Exclude returns the subset of values not in [min, max].  The values must
-    /// be deduplicated and sorted before calling Exclude or the results are undefined.
-    pub fn exclude(self, min: i64, max: i64) -> Self {
-        match self {
-            Self::Float(values) => Self::Float(Self::exclude_values(values, min, max)),
-            Self::Integer(values) => Self::Integer(Self::exclude_values(values, min, max)),
-            Self::Bool(values) => Self::Bool(Self::exclude_values(values, min, max)),
-            Self::Str(values) => Self::Str(Self::exclude_values(values, min, max)),
-            Self::Unsigned(values) => Self::Unsigned(Self::exclude_values(values, min, max)),
-        }
-    }
-
-    fn include_values<T>(mut values: Vec<Value<T>>, min: i64, max: i64) -> Vec<Value<T>>
-    where
-        T: Debug + Clone + PartialOrd + PartialEq,
-    {
-        let (rmin, mut rmax) = Self::find_range_values(values.as_slice(), min, max);
+    fn include(mut self, min: i64, max: i64) -> Self {
+        let (rmin, mut rmax) = self.find_range(min, max);
         if rmin == -1 && rmax == -1 {
             return vec![];
         }
@@ -208,123 +162,60 @@ impl Values {
         // a[rmin].UnixNano() ≥ min
         // a[rmax].UnixNano() ≥ max
 
-        if rmax < values.len() as isize && values[rmax as usize].unix_nano == max {
+        if rmax < self.len() as isize && self[rmax as usize].unix_nano == max {
             rmax += 1;
         }
 
         if rmin > -1 {
-            return values[rmin as usize..rmax as usize].to_vec();
+            return self[rmin as usize..rmax as usize].to_vec();
         }
 
-        values.truncate(rmax as usize);
-        values
+        self.truncate(rmax as usize);
+        self
     }
 
-    /// Include returns the subset values between min and max inclusive. The values must
-    /// be deduplicated and sorted before calling Exclude or the results are undefined.
-    pub fn include(self, min: i64, max: i64) -> Self {
-        match self {
-            Self::Float(values) => Self::Float(Self::include_values(values, min, max)),
-            Self::Integer(values) => Self::Integer(Self::include_values(values, min, max)),
-            Self::Bool(values) => Self::Bool(Self::include_values(values, min, max)),
-            Self::Str(values) => Self::Str(Self::include_values(values, min, max)),
-            Self::Unsigned(values) => Self::Unsigned(Self::include_values(values, min, max)),
-        }
-    }
-
-    fn find_range_values<T>(values: &[Value<T>], min: i64, max: i64) -> (isize, isize)
-    where
-        T: Debug + Clone + PartialOrd + PartialEq,
-    {
-        if values.len() == 0 || min > max {
+    fn find_range(&self, min: i64, max: i64) -> (isize, isize) {
+        if self.len() == 0 || min > max {
             return (-1, -1);
         }
 
-        let min_val = values[0].unix_nano;
-        let max_val = values[values.len() - 1].unix_nano;
+        let min_val = self[0].unix_nano;
+        let max_val = self[self.len() - 1].unix_nano;
 
         if max_val < min || min_val > max {
             return (-1, -1);
         }
 
-        (
-            Self::search(values, min) as isize,
-            Self::search(values, max) as isize,
-        )
+        (search(self, min) as isize, search(self, max) as isize)
     }
 
-    /// FindRange returns the positions where min and max would be
-    /// inserted into the array. If a[0].UnixNano() > max or
-    /// a[len-1].UnixNano() < min then FindRange returns (-1, -1)
-    /// indicating the array is outside the [min, max]. The values must
-    /// be deduplicated and sorted before calling Exclude or the results
-    /// are undefined.
-    pub fn find_range(&self, min: i64, max: i64) -> (isize, isize) {
-        match self {
-            Self::Float(values) => Self::find_range_values(values, min, max),
-            Self::Integer(values) => Self::find_range_values(values, min, max),
-            Self::Bool(values) => Self::find_range_values(values, min, max),
-            Self::Str(values) => Self::find_range_values(values, min, max),
-            Self::Unsigned(values) => Self::find_range_values(values, min, max),
+    fn merge(mut self, mut b: Self) -> Self {
+        if self.len() == 0 {
+            return b;
         }
-    }
-
-    /// search performs a binary search for UnixNano() v in a
-    /// and returns the position, i, where v would be inserted.
-    /// An additional check of a[i].UnixNano() == v is necessary
-    /// to determine if the value v exists.
-    fn search<T>(values: &[Value<T>], v: i64) -> usize
-    where
-        T: Debug + Clone + PartialOrd + PartialEq,
-    {
-        // Define: f(x) → a[x].UnixNano() < v
-        // Define: f(-1) == true, f(n) == false
-        // Invariant: f(lo-1) == true, f(hi) == false
-        let mut lo = 0usize;
-        let mut hi = values.len();
-        while lo < hi {
-            let mid = (lo + hi) >> 1;
-            if values[mid].unix_nano < v {
-                lo = mid + 1; // preserves f(lo-1) == true
-            } else {
-                hi = mid; // preserves f(hi) == false
-            }
-        }
-
-        // lo == hi
-        lo
-    }
-
-    fn merge_values<T>(mut values_a: Vec<Value<T>>, mut values_b: Vec<Value<T>>) -> Vec<Value<T>>
-    where
-        T: Debug + Clone + PartialOrd + PartialEq,
-    {
-        if values_a.len() == 0 {
-            return values_b;
-        }
-        if values_b.len() == 0 {
-            return values_a;
+        if b.len() == 0 {
+            return self;
         }
 
         // Normally, both a and b should not contain duplicates.  Due to a bug in older versions, it's
         // possible stored blocks might contain duplicate values.  Remove them if they exists before
         // merging.
-        values_a = Self::deduplicate_values(values_a);
-        values_b = Self::deduplicate_values(values_b);
+        self = self.deduplicate();
+        b = b.deduplicate();
 
-        if values_a[values_a.len() - 1].unix_nano < values_b[0].unix_nano {
-            values_a.extend_from_slice(values_b.as_slice());
-            return values_a;
+        if self[self.len() - 1].unix_nano < b[0].unix_nano {
+            self.extend_from_slice(b.as_slice());
+            return self;
         }
 
-        if values_b[values_b.len() - 1].unix_nano < values_a[0].unix_nano {
-            values_b.extend_from_slice(values_a.as_slice());
-            return values_b;
+        if b[b.len() - 1].unix_nano < self[0].unix_nano {
+            b.extend_from_slice(self.as_slice());
+            return b;
         }
 
-        let mut out = Vec::with_capacity(values_a.len() + values_b.len());
-        let mut a = values_a.as_slice();
-        let mut b = values_b.as_slice();
+        let mut out = Vec::with_capacity(self.len() + b.len());
+        let mut a = self.as_slice();
+        let mut b = b.as_slice();
 
         while a.len() > 0 && b.len() > 0 {
             if a[0].unix_nano < b[0].unix_nano {
@@ -347,44 +238,523 @@ impl Values {
 
         out
     }
+}
 
-    pub fn merge(self, b: Values) -> anyhow::Result<Self> {
+/// Values describes the various types of block data that can be held within a TSM file.
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
+pub enum Values {
+    Float(Vec<Value<f64>>),
+    Integer(Vec<Value<i64>>),
+    Bool(Vec<Value<bool>>),
+    Str(Vec<Value<Vec<u8>>>),
+    Unsigned(Vec<Value<u64>>),
+}
+
+impl TValues for Values {
+    fn min_time(&self) -> i64 {
+        match self {
+            Self::Float(values) => values.min_time(),
+            Self::Integer(values) => values.min_time(),
+            Self::Bool(values) => values.min_time(),
+            Self::Str(values) => values.min_time(),
+            Self::Unsigned(values) => values.min_time(),
+        }
+    }
+
+    fn max_time(&self) -> i64 {
+        match self {
+            Self::Float(values) => values.max_time(),
+            Self::Integer(values) => values.max_time(),
+            Self::Bool(values) => values.max_time(),
+            Self::Str(values) => values.max_time(),
+            Self::Unsigned(values) => values.max_time(),
+        }
+    }
+
+    fn size(&self) -> usize {
+        match self {
+            Self::Float(values) => values.size(),
+            Self::Integer(values) => values.size(),
+            Self::Bool(values) => values.size(),
+            Self::Str(values) => values.size(),
+            Self::Unsigned(values) => values.size(),
+        }
+    }
+
+    fn ordered(&self) -> bool {
+        match self {
+            Self::Float(values) => values.ordered(),
+            Self::Integer(values) => values.ordered(),
+            Self::Bool(values) => values.ordered(),
+            Self::Str(values) => values.ordered(),
+            Self::Unsigned(values) => values.ordered(),
+        }
+    }
+
+    fn deduplicate(self) -> Self {
+        match self {
+            Self::Float(values) => Self::Float(values.deduplicate()),
+            Self::Integer(values) => Self::Integer(values.deduplicate()),
+            Self::Bool(values) => Self::Bool(values.deduplicate()),
+            Self::Str(values) => Self::Str(values.deduplicate()),
+            Self::Unsigned(values) => Self::Unsigned(values.deduplicate()),
+        }
+    }
+
+    fn exclude(self, min: i64, max: i64) -> Self {
+        match self {
+            Self::Float(values) => Self::Float(values.exclude(min, max)),
+            Self::Integer(values) => Self::Integer(values.exclude(min, max)),
+            Self::Bool(values) => Self::Bool(values.exclude(min, max)),
+            Self::Str(values) => Self::Str(values.exclude(min, max)),
+            Self::Unsigned(values) => Self::Unsigned(values.exclude(min, max)),
+        }
+    }
+
+    fn include(self, min: i64, max: i64) -> Self {
+        match self {
+            Self::Float(values) => Self::Float(values.include(min, max)),
+            Self::Integer(values) => Self::Integer(values.include(min, max)),
+            Self::Bool(values) => Self::Bool(values.include(min, max)),
+            Self::Str(values) => Self::Str(values.include(min, max)),
+            Self::Unsigned(values) => Self::Unsigned(values.include(min, max)),
+        }
+    }
+
+    fn find_range(&self, min: i64, max: i64) -> (isize, isize) {
+        match self {
+            Self::Float(values) => values.find_range(min, max),
+            Self::Integer(values) => values.find_range(min, max),
+            Self::Bool(values) => values.find_range(min, max),
+            Self::Str(values) => values.find_range(min, max),
+            Self::Unsigned(values) => values.find_range(min, max),
+        }
+    }
+
+    fn merge(self, b: Self) -> Self {
         match self {
             Self::Float(values) => {
                 if let Self::Float(values_b) = b {
-                    Ok(Self::Float(Self::merge_values(values, values_b)))
+                    Self::Float(values.merge(values_b))
                 } else {
-                    Err(anyhow!("expect Float values"))
+                    panic!("expect Float values")
                 }
             }
             Self::Integer(values) => {
                 if let Self::Integer(values_b) = b {
-                    Ok(Self::Integer(Self::merge_values(values, values_b)))
+                    Self::Integer(values.merge(values_b))
                 } else {
-                    Err(anyhow!("expect Integer values"))
+                    panic!("expect Float values")
                 }
             }
             Self::Bool(values) => {
                 if let Self::Bool(values_b) = b {
-                    Ok(Self::Bool(Self::merge_values(values, values_b)))
+                    Self::Bool(values.merge(values_b))
                 } else {
-                    Err(anyhow!("expect Bool values"))
+                    panic!("expect Float values")
                 }
             }
             Self::Str(values) => {
                 if let Self::Str(values_b) = b {
-                    Ok(Self::Str(Self::merge_values(values, values_b)))
+                    Self::Str(values.merge(values_b))
                 } else {
-                    Err(anyhow!("expect Str values"))
+                    panic!("expect Float values")
                 }
             }
             Self::Unsigned(values) => {
                 if let Self::Unsigned(values_b) = b {
-                    Ok(Self::Unsigned(Self::merge_values(values, values_b)))
+                    Self::Unsigned(values.merge(values_b))
                 } else {
-                    Err(anyhow!("expect Unsigned values"))
+                    panic!("expect Float values")
                 }
             }
         }
     }
+}
+
+impl Values {
+    // pub fn min_time(&self) -> i64 {
+    //     match self {
+    //         Self::Float(values) => values[0].unix_nano,
+    //         Self::Integer(values) => values[0].unix_nano,
+    //         Self::Bool(values) => values[0].unix_nano,
+    //         Self::Str(values) => values[0].unix_nano,
+    //         Self::Unsigned(values) => values[0].unix_nano,
+    //     }
+    // }
+    //
+    // pub fn max_time(&self) -> i64 {
+    //     match self {
+    //         Self::Float(values) => values[values.len() - 1].unix_nano,
+    //         Self::Integer(values) => values[values.len() - 1].unix_nano,
+    //         Self::Bool(values) => values[values.len() - 1].unix_nano,
+    //         Self::Str(values) => values[values.len() - 1].unix_nano,
+    //         Self::Unsigned(values) => values[values.len() - 1].unix_nano,
+    //     }
+    // }
+    //
+    // pub fn size(&self) -> usize {
+    //     let mut sz = 0;
+    //     match self {
+    //         Self::Float(values) => {
+    //             for _i in 0..values.len() {
+    //                 sz += 16
+    //             }
+    //         }
+    //         Self::Integer(values) => {
+    //             for _i in 0..values.len() {
+    //                 sz += 16
+    //             }
+    //         }
+    //         Self::Bool(values) => {
+    //             for _i in 0..values.len() {
+    //                 sz += 9
+    //             }
+    //         }
+    //         Self::Str(values) => {
+    //             for v in values {
+    //                 sz += 8 + v.value.len();
+    //             }
+    //         }
+    //         Self::Unsigned(values) => {
+    //             for _i in 0..values.len() {
+    //                 sz += 16
+    //             }
+    //         }
+    //     };
+    //
+    //     sz
+    // }
+    //
+    // fn ordered_values<T>(values: &[Value<T>]) -> bool
+    // where
+    //     T: Debug + Clone + PartialOrd + PartialEq,
+    // {
+    //     if values.len() <= 1 {
+    //         return true;
+    //     }
+    //
+    //     for i in 1..values.len() {
+    //         let a = values[i - 1].unix_nano;
+    //         let b = values[i].unix_nano;
+    //         if a >= b {
+    //             return false;
+    //         }
+    //     }
+    //     return true;
+    // }
+    //
+    // fn ordered(&self) -> bool {
+    //     match self {
+    //         Self::Float(values) => Self::ordered_values(values),
+    //         Self::Integer(values) => Self::ordered_values(values),
+    //         Self::Bool(values) => Self::ordered_values(values),
+    //         Self::Str(values) => Self::ordered_values(values),
+    //         Self::Unsigned(values) => Self::ordered_values(values),
+    //     }
+    // }
+    //
+    // fn deduplicate_values<T>(mut values: Vec<Value<T>>) -> Vec<Value<T>>
+    // where
+    //     T: Debug + Clone + PartialOrd + PartialEq,
+    // {
+    //     if values.len() <= 1 {
+    //         return values;
+    //     }
+    //
+    //     if Self::ordered_values(values.as_slice()) {
+    //         return values;
+    //     }
+    //
+    //     values.sort_by(|x, y| x.unix_nano.cmp(&y.unix_nano));
+    //     let mut i = 0;
+    //     for j in 1..values.len() {
+    //         let v = &values[j];
+    //         if v.unix_nano != values[i].unix_nano {
+    //             i += 1;
+    //         }
+    //         values[i] = v.clone();
+    //     }
+    //
+    //     i += 1;
+    //     if i == values.len() {
+    //         return values;
+    //     }
+    //
+    //     values.truncate(i);
+    //     values
+    // }
+    //
+    // /// Deduplicate returns a new slice with any values that have the same timestamp removed.
+    // /// The Value that appears last in the slice is the one that is kept.  The returned
+    // /// Values are sorted if necessary.
+    // pub fn deduplicate(self) -> Self {
+    //     match self {
+    //         Self::Float(values) => Self::Float(Self::deduplicate_values(values)),
+    //         Self::Integer(values) => Self::Integer(Self::deduplicate_values(values)),
+    //         Self::Bool(values) => Self::Bool(Self::deduplicate_values(values)),
+    //         Self::Str(values) => Self::Str(Self::deduplicate_values(values)),
+    //         Self::Unsigned(values) => Self::Unsigned(Self::deduplicate_values(values)),
+    //     }
+    // }
+    //
+    // fn exclude_values<T>(mut values: Vec<Value<T>>, min: i64, max: i64) -> Vec<Value<T>>
+    // where
+    //     T: Debug + Clone + PartialOrd + PartialEq,
+    // {
+    //     let (rmin, mut rmax) = Self::find_range_values(values.as_slice(), min, max);
+    //     if rmin == -1 && rmax == -1 {
+    //         return values;
+    //     }
+    //
+    //     // a[rmin].UnixNano() ≥ min
+    //     // a[rmax].UnixNano() ≥ max
+    //
+    //     if rmax < values.len() as isize {
+    //         if values[rmax as usize].unix_nano == max {
+    //             rmax += 1;
+    //         }
+    //         let rest = values.len() as isize - rmax;
+    //         if rest > 0 {
+    //             let right = values[rmax as usize..].to_vec();
+    //             values.truncate((rmin + rest) as usize);
+    //             values.extend_from_slice(right.as_slice());
+    //
+    //             return values;
+    //         }
+    //     }
+    //
+    //     values.truncate(rmin as usize);
+    //     values
+    // }
+    //
+    // /// Exclude returns the subset of values not in [min, max].  The values must
+    // /// be deduplicated and sorted before calling Exclude or the results are undefined.
+    // pub fn exclude(self, min: i64, max: i64) -> Self {
+    //     match self {
+    //         Self::Float(values) => Self::Float(Self::exclude_values(values, min, max)),
+    //         Self::Integer(values) => Self::Integer(Self::exclude_values(values, min, max)),
+    //         Self::Bool(values) => Self::Bool(Self::exclude_values(values, min, max)),
+    //         Self::Str(values) => Self::Str(Self::exclude_values(values, min, max)),
+    //         Self::Unsigned(values) => Self::Unsigned(Self::exclude_values(values, min, max)),
+    //     }
+    // }
+    //
+    // fn include_values<T>(mut values: Vec<Value<T>>, min: i64, max: i64) -> Vec<Value<T>>
+    // where
+    //     T: Debug + Clone + PartialOrd + PartialEq,
+    // {
+    //     let (rmin, mut rmax) = Self::find_range_values(values.as_slice(), min, max);
+    //     if rmin == -1 && rmax == -1 {
+    //         return vec![];
+    //     }
+    //
+    //     // a[rmin].UnixNano() ≥ min
+    //     // a[rmax].UnixNano() ≥ max
+    //
+    //     if rmax < values.len() as isize && values[rmax as usize].unix_nano == max {
+    //         rmax += 1;
+    //     }
+    //
+    //     if rmin > -1 {
+    //         return values[rmin as usize..rmax as usize].to_vec();
+    //     }
+    //
+    //     values.truncate(rmax as usize);
+    //     values
+    // }
+    //
+    // /// Include returns the subset values between min and max inclusive. The values must
+    // /// be deduplicated and sorted before calling Exclude or the results are undefined.
+    // pub fn include(self, min: i64, max: i64) -> Self {
+    //     match self {
+    //         Self::Float(values) => Self::Float(Self::include_values(values, min, max)),
+    //         Self::Integer(values) => Self::Integer(Self::include_values(values, min, max)),
+    //         Self::Bool(values) => Self::Bool(Self::include_values(values, min, max)),
+    //         Self::Str(values) => Self::Str(Self::include_values(values, min, max)),
+    //         Self::Unsigned(values) => Self::Unsigned(Self::include_values(values, min, max)),
+    //     }
+    // }
+    //
+    // fn find_range_values<T>(values: &[Value<T>], min: i64, max: i64) -> (isize, isize)
+    // where
+    //     T: Debug + Clone + PartialOrd + PartialEq,
+    // {
+    //     if values.len() == 0 || min > max {
+    //         return (-1, -1);
+    //     }
+    //
+    //     let min_val = values[0].unix_nano;
+    //     let max_val = values[values.len() - 1].unix_nano;
+    //
+    //     if max_val < min || min_val > max {
+    //         return (-1, -1);
+    //     }
+    //
+    //     (
+    //         Self::search(values, min) as isize,
+    //         Self::search(values, max) as isize,
+    //     )
+    // }
+    //
+    // /// FindRange returns the positions where min and max would be
+    // /// inserted into the array. If a[0].UnixNano() > max or
+    // /// a[len-1].UnixNano() < min then FindRange returns (-1, -1)
+    // /// indicating the array is outside the [min, max]. The values must
+    // /// be deduplicated and sorted before calling Exclude or the results
+    // /// are undefined.
+    // pub fn find_range(&self, min: i64, max: i64) -> (isize, isize) {
+    //     match self {
+    //         Self::Float(values) => Self::find_range_values(values, min, max),
+    //         Self::Integer(values) => Self::find_range_values(values, min, max),
+    //         Self::Bool(values) => Self::find_range_values(values, min, max),
+    //         Self::Str(values) => Self::find_range_values(values, min, max),
+    //         Self::Unsigned(values) => Self::find_range_values(values, min, max),
+    //     }
+    // }
+    //
+    // /// search performs a binary search for UnixNano() v in a
+    // /// and returns the position, i, where v would be inserted.
+    // /// An additional check of a[i].UnixNano() == v is necessary
+    // /// to determine if the value v exists.
+    // fn search<T>(values: &[Value<T>], v: i64) -> usize
+    // where
+    //     T: Debug + Clone + PartialOrd + PartialEq,
+    // {
+    //     // Define: f(x) → a[x].UnixNano() < v
+    //     // Define: f(-1) == true, f(n) == false
+    //     // Invariant: f(lo-1) == true, f(hi) == false
+    //     let mut lo = 0usize;
+    //     let mut hi = values.len();
+    //     while lo < hi {
+    //         let mid = (lo + hi) >> 1;
+    //         if values[mid].unix_nano < v {
+    //             lo = mid + 1; // preserves f(lo-1) == true
+    //         } else {
+    //             hi = mid; // preserves f(hi) == false
+    //         }
+    //     }
+    //
+    //     // lo == hi
+    //     lo
+    // }
+    //
+    // fn merge_values<T>(mut values_a: Vec<Value<T>>, mut values_b: Vec<Value<T>>) -> Vec<Value<T>>
+    // where
+    //     T: Debug + Clone + PartialOrd + PartialEq,
+    // {
+    //     if values_a.len() == 0 {
+    //         return values_b;
+    //     }
+    //     if values_b.len() == 0 {
+    //         return values_a;
+    //     }
+    //
+    //     // Normally, both a and b should not contain duplicates.  Due to a bug in older versions, it's
+    //     // possible stored blocks might contain duplicate values.  Remove them if they exists before
+    //     // merging.
+    //     values_a = Self::deduplicate_values(values_a);
+    //     values_b = Self::deduplicate_values(values_b);
+    //
+    //     if values_a[values_a.len() - 1].unix_nano < values_b[0].unix_nano {
+    //         values_a.extend_from_slice(values_b.as_slice());
+    //         return values_a;
+    //     }
+    //
+    //     if values_b[values_b.len() - 1].unix_nano < values_a[0].unix_nano {
+    //         values_b.extend_from_slice(values_a.as_slice());
+    //         return values_b;
+    //     }
+    //
+    //     let mut out = Vec::with_capacity(values_a.len() + values_b.len());
+    //     let mut a = values_a.as_slice();
+    //     let mut b = values_b.as_slice();
+    //
+    //     while a.len() > 0 && b.len() > 0 {
+    //         if a[0].unix_nano < b[0].unix_nano {
+    //             out.push(a[0].clone());
+    //             a = &a[1..];
+    //         } else if b.len() > 0 && a[0].unix_nano == b[0].unix_nano {
+    //             a = &a[1..];
+    //         } else {
+    //             out.push(b[0].clone());
+    //             b = &b[1..];
+    //         }
+    //     }
+    //
+    //     if a.len() > 0 {
+    //         out.extend_from_slice(a);
+    //     }
+    //     if b.len() > 0 {
+    //         out.extend_from_slice(b);
+    //     }
+    //
+    //     out
+    // }
+    //
+    // pub fn merge(self, b: Values) -> anyhow::Result<Self> {
+    //     match self {
+    //         Self::Float(values) => {
+    //             if let Self::Float(values_b) = b {
+    //                 Ok(Self::Float(Self::merge_values(values, values_b)))
+    //             } else {
+    //                 Err(anyhow!("expect Float values"))
+    //             }
+    //         }
+    //         Self::Integer(values) => {
+    //             if let Self::Integer(values_b) = b {
+    //                 Ok(Self::Integer(Self::merge_values(values, values_b)))
+    //             } else {
+    //                 Err(anyhow!("expect Integer values"))
+    //             }
+    //         }
+    //         Self::Bool(values) => {
+    //             if let Self::Bool(values_b) = b {
+    //                 Ok(Self::Bool(Self::merge_values(values, values_b)))
+    //             } else {
+    //                 Err(anyhow!("expect Bool values"))
+    //             }
+    //         }
+    //         Self::Str(values) => {
+    //             if let Self::Str(values_b) = b {
+    //                 Ok(Self::Str(Self::merge_values(values, values_b)))
+    //             } else {
+    //                 Err(anyhow!("expect Str values"))
+    //             }
+    //         }
+    //         Self::Unsigned(values) => {
+    //             if let Self::Unsigned(values_b) = b {
+    //                 Ok(Self::Unsigned(Self::merge_values(values, values_b)))
+    //             } else {
+    //                 Err(anyhow!("expect Unsigned values"))
+    //             }
+    //         }
+    //     }
+    // }
+}
+
+/// search performs a binary search for UnixNano() v in a
+/// and returns the position, i, where v would be inserted.
+/// An additional check of a[i].UnixNano() == v is necessary
+/// to determine if the value v exists.
+fn search<T>(values: &[Value<T>], v: i64) -> usize
+where
+    T: Debug + Clone + PartialOrd + PartialEq,
+{
+    // Define: f(x) → a[x].UnixNano() < v
+    // Define: f(-1) == true, f(n) == false
+    // Invariant: f(lo-1) == true, f(hi) == false
+    let mut lo = 0usize;
+    let mut hi = values.len();
+    while lo < hi {
+        let mid = (lo + hi) >> 1;
+        if values[mid].unix_nano < v {
+            lo = mid + 1; // preserves f(lo-1) == true
+        } else {
+            hi = mid; // preserves f(hi) == false
+        }
+    }
+
+    // lo == hi
+    lo
 }
