@@ -5,8 +5,6 @@
 
 //! Note: an uncompressed format is not yet implemented.
 
-use std::io::{Read, Write};
-
 use anyhow::anyhow;
 
 use crate::engine::tsm1::encoding::varint_encoder::VarInt;
@@ -169,14 +167,16 @@ impl StringDecoder {
 
 #[cfg(test)]
 mod tests {
-    use crate::engine::tsm1::encoding::string_encoder::{StringDecoder, StringEncoder};
+    use crate::engine::tsm1::encoding::string_encoder::{
+        StringDecoder, StringEncoder, STRING_COMPRESSED_SNAPPY,
+    };
 
     #[test]
     fn test_string_encoder_no_values() {
         let mut enc = StringEncoder::new(1024);
         let b = enc.bytes().unwrap();
 
-        let mut dec_r = StringDecoder::new(b.as_slice());
+        let dec_r = StringDecoder::new(b.as_slice());
         assert_eq!(
             dec_r.is_err(),
             true,
@@ -205,5 +205,67 @@ mod tests {
             dec.read_str().unwrap(),
             v1
         )
+    }
+
+    #[test]
+    fn test_string_encoder_multi_compressed() {
+        let mut enc = StringEncoder::new(1024);
+
+        let mut values = Vec::with_capacity(10);
+        for i in 0..10 {
+            values.push(format!("value {}", i));
+            enc.write(values[i].as_str());
+        }
+
+        let b = enc.bytes().unwrap();
+
+        let got = b[0] >> 4;
+        assert_eq!(
+            got, STRING_COMPRESSED_SNAPPY,
+            "unexpected encoding: got {}, exp {}",
+            b[0], STRING_COMPRESSED_SNAPPY
+        );
+
+        let exp = 51;
+        assert_eq!(
+            exp,
+            b.len(),
+            "unexpected length: got {}, exp {}",
+            b.len(),
+            exp
+        );
+
+        let mut dec = StringDecoder::new(b.as_slice()).unwrap();
+        for (i, v) in values.into_iter().enumerate() {
+            assert_eq!(
+                dec.next(),
+                true,
+                "unexpected next value: got false, exp true"
+            );
+            assert_eq!(
+                dec.read_str().unwrap(),
+                v.as_str(),
+                "unexpected value at pos {}: got {}, exp {}",
+                i,
+                dec.read_str().unwrap(),
+                v.as_str()
+            );
+        }
+
+        assert_eq!(
+            dec.next(),
+            false,
+            "unexpected next value: got true, exp false"
+        );
+    }
+
+    #[test]
+    fn test_string_decoder_empty() {
+        let dec_r = StringDecoder::new("".as_bytes());
+        assert_eq!(
+            dec_r.is_err(),
+            true,
+            "unexpected next value: got true, exp false"
+        );
     }
 }

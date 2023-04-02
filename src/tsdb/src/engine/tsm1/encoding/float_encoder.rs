@@ -16,8 +16,8 @@ use crate::engine::tsm1::encoding::bit_encoder::{
 /// FLOAT_COMPRESSED_GORILLA is a compressed format using the gorilla paper encoding
 const FLOAT_COMPRESSED_GORILLA: u8 = 1;
 
-/// uvnan is the constant returned from math.NaN().
-const uvnan: u64 = 0x7FF8000000000001;
+/// UVNAN is the constant returned from math.NaN().
+const UVNAN: u64 = 0x7FF8000000000001;
 
 // same as ^uint64(0) in go
 const BASIC_VALUE: u64 = 18446744073709551615;
@@ -67,7 +67,7 @@ impl FloatEncoder {
             // write an end-of-stream record
             self.finished = true;
             // self.write(f64::NAN);
-            self.write(f64::from_bits(uvnan));
+            self.write(f64::from_bits(UVNAN));
         }
     }
 
@@ -147,7 +147,7 @@ pub struct FloatDecoder<'a> {
 impl<'a> FloatDecoder<'a> {
     pub fn new(b: &'a [u8]) -> anyhow::Result<Self> {
         let (v, br) = if b.len() == 0 {
-            (uvnan, None)
+            (UVNAN, None)
         } else {
             let mut br = BufferedReader::new(&b[1..]);
             let v = br.read_bits(64).map_err(|e| anyhow!(e))?;
@@ -210,7 +210,7 @@ impl<'a> FloatDecoder<'a> {
             self.first = false;
 
             // mark as finished if there were no values.
-            if self.val == uvnan {
+            if self.val == UVNAN {
                 // IsNaN
                 self.finished = true;
                 return false;
@@ -221,7 +221,7 @@ impl<'a> FloatDecoder<'a> {
 
         match self.next_value() {
             Ok(v) => {
-                if v == uvnan {
+                if v == UVNAN {
                     self.finished = true;
                     false
                 } else {

@@ -3,12 +3,13 @@
 //! how many booleans are packed in the slice.  The remaining bytes contains 1 byte for every
 //! 8 boolean values encoded.
 
-use crate::engine::tsm1::encoding::varint_encoder::VarInt;
 use anyhow::anyhow;
 
+use crate::engine::tsm1::encoding::varint_encoder::VarInt;
+
 /// Note: an uncompressed boolean format is not yet implemented.
-/// booleanCompressedBitPacked is a bit packed format using 1 bit per boolean
-const booleanCompressedBitPacked: u8 = 1;
+/// BOOLEAN_COMPRESSED_BIT_PACKED is a bit packed format using 1 bit per boolean
+const BOOLEAN_COMPRESSED_BIT_PACKED: u8 = 1;
 
 /// BooleanEncoder encodes a series of booleans to an in-memory buffer.
 pub struct BooleanEncoder {
@@ -77,7 +78,7 @@ impl BooleanEncoder {
         let mut b = Vec::with_capacity(10 + 1);
 
         // Store the encoding type in the 4 high bits of the first byte
-        b.push((booleanCompressedBitPacked as u8) << 4);
+        b.push((BOOLEAN_COMPRESSED_BIT_PACKED as u8) << 4);
 
         // Encode the number of booleans written
         let mut tmp = [0u8; 10];

@@ -46,7 +46,6 @@ const TIME_COMPRESSED_RLE: u8 = 2;
 /// TimeEncoder encodes time.Time to byte slices.
 pub struct TimeEncoder {
     ts: Vec<u64>,
-    bytes: Vec<u8>,
     enc: simple8b_encoder::Encoder,
 }
 
@@ -54,7 +53,6 @@ impl TimeEncoder {
     pub fn new(sz: usize) -> Self {
         Self {
             ts: Vec::with_capacity(sz),
-            bytes: Vec::with_capacity(0),
             enc: simple8b_encoder::Encoder::new(),
         }
     }
