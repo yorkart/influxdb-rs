@@ -9,7 +9,8 @@ use crate::engine::tsm1::codec::timestamp::TimeEncoder;
 use crate::engine::tsm1::codec::unsigned::UnsignedEncoder;
 use crate::engine::tsm1::codec::varint::VarInt;
 use crate::engine::tsm1::codec::{varint, Encoder};
-use crate::engine::tsm1::encoding::Values;
+use crate::engine::tsm1::encoding::{Value, Values};
+use std::fmt::Debug;
 
 pub fn encode_block(dst: &mut Vec<u8>, values: Values) -> anyhow::Result<Vec<u8>> {
     match values {
@@ -21,31 +22,31 @@ pub fn encode_block(dst: &mut Vec<u8>, values: Values) -> anyhow::Result<Vec<u8>
     }
 }
 
-fn encode_float_block(buf: &mut Vec<u8>, values: Vec<(i64, f64)>) -> anyhow::Result<Vec<u8>> {
+fn encode_float_block(buf: &mut Vec<u8>, values: Vec<Value<f64>>) -> anyhow::Result<Vec<u8>> {
     let v_enc = FloatEncoder::new();
     let ts_enc = TimeEncoder::new(values.len());
     encode_block_using(BLOCK_FLOAT64, buf, values, ts_enc, v_enc)
 }
 
-fn encode_integer_block(buf: &mut Vec<u8>, values: Vec<(i64, i64)>) -> anyhow::Result<Vec<u8>> {
+fn encode_integer_block(buf: &mut Vec<u8>, values: Vec<Value<i64>>) -> anyhow::Result<Vec<u8>> {
     let v_enc = IntegerEncoder::new(values.len());
     let ts_enc = TimeEncoder::new(values.len());
     encode_block_using(BLOCK_INTEGER, buf, values, ts_enc, v_enc)
 }
 
-fn encode_bool_block(buf: &mut Vec<u8>, values: Vec<(i64, bool)>) -> anyhow::Result<Vec<u8>> {
+fn encode_bool_block(buf: &mut Vec<u8>, values: Vec<Value<bool>>) -> anyhow::Result<Vec<u8>> {
     let v_enc = BooleanEncoder::new(values.len());
     let ts_enc = TimeEncoder::new(values.len());
     encode_block_using(BLOCK_BOOLEAN, buf, values, ts_enc, v_enc)
 }
 
-fn encode_str_block(buf: &mut Vec<u8>, values: Vec<(i64, Vec<u8>)>) -> anyhow::Result<Vec<u8>> {
+fn encode_str_block(buf: &mut Vec<u8>, values: Vec<Value<Vec<u8>>>) -> anyhow::Result<Vec<u8>> {
     let v_enc = StringEncoder::new(values.len());
     let ts_enc = TimeEncoder::new(values.len());
     encode_block_using(BLOCK_STRING, buf, values, ts_enc, v_enc)
 }
 
-fn encode_unsigned_block(buf: &mut Vec<u8>, values: Vec<(i64, u64)>) -> anyhow::Result<Vec<u8>> {
+fn encode_unsigned_block(buf: &mut Vec<u8>, values: Vec<Value<u64>>) -> anyhow::Result<Vec<u8>> {
     let v_enc = UnsignedEncoder::new(values.len());
     let ts_enc = TimeEncoder::new(values.len());
     encode_block_using(BLOCK_UNSIGNED, buf, values, ts_enc, v_enc)
@@ -54,15 +55,18 @@ fn encode_unsigned_block(buf: &mut Vec<u8>, values: Vec<(i64, u64)>) -> anyhow::
 fn encode_block_using<T>(
     typ: u8,
     buf: &mut Vec<u8>,
-    values: Vec<(i64, T)>,
+    values: Vec<Value<T>>,
     mut ts_enc: impl Encoder<i64>,
     mut v_enc: impl Encoder<T>,
-) -> anyhow::Result<Vec<u8>> {
+) -> anyhow::Result<Vec<u8>>
+where
+    T: Debug + Clone + PartialOrd + PartialEq,
+{
     if values.len() == 0 {
         return Err(anyhow!("encode_float_block: no data found"));
     }
 
-    for (unix_nano, value) in values {
+    for Value { unix_nano, value } in values {
         ts_enc.write(unix_nano);
         v_enc.write(value);
     }

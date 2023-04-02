@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use crate::engine::tsm1::block::ENCODED_BLOCK_HEADER_SIZE;
 use crate::engine::tsm1::block::{
     BLOCK_BOOLEAN, BLOCK_FLOAT64, BLOCK_INTEGER, BLOCK_STRING, BLOCK_UNSIGNED,
@@ -10,7 +12,7 @@ use crate::engine::tsm1::codec::timestamp::TimeDecoder;
 use crate::engine::tsm1::codec::unsigned::UnsignedDecoder;
 use crate::engine::tsm1::codec::varint::VarInt;
 use crate::engine::tsm1::codec::{timestamp, Decoder};
-use crate::engine::tsm1::encoding::Values;
+use crate::engine::tsm1::encoding::{Value, Values};
 
 pub fn decode_block(block: &[u8]) -> anyhow::Result<Values> {
     if block.len() <= ENCODED_BLOCK_HEADER_SIZE {
@@ -72,7 +74,10 @@ fn decode_block_using<T>(
     sz: usize,
     mut ts_dec: impl Decoder<i64>,
     mut v_dec: impl Decoder<T>,
-) -> anyhow::Result<Vec<(i64, T)>> {
+) -> anyhow::Result<Vec<Value<T>>>
+where
+    T: Debug + Clone + PartialOrd + PartialEq,
+{
     let mut values = Vec::with_capacity(sz);
     for _ in 0..sz {
         if !ts_dec.next() {
@@ -88,7 +93,7 @@ fn decode_block_using<T>(
             return Err(anyhow!("read values block error: {}", err.to_string()));
         }
 
-        values.push((ts_dec.read(), v_dec.read()));
+        values.push(Value::new(ts_dec.read(), v_dec.read()));
     }
 
     Ok(values)
