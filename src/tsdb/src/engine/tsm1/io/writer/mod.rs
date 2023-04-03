@@ -37,7 +37,7 @@
 //! is located and the the size of the block.
 //!
 //! The index structure can provide efficient access to all blocks as well as the
-//! ability to determine the cost associated with acessing a given key.  Given a key
+//! ability to determine the cost associated with accessing a given key.  Given a key
 //! and timestamp, we can determine whether a file contains the block for that
 //! timestamp as well as where that block resides and how much data to read to
 //! retrieve the block.  If we know we need to read all or multiple blocks in a

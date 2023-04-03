@@ -182,9 +182,9 @@ fn float(i: &str) -> ParseResult<&str, f64> {
 /// Represents any signed number.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Number {
-    /// Contains a 64-bit integer.
+    /// contains a 64-bit integer.
     Integer(i64),
-    /// Contains a 64-bit float.
+    /// contains a 64-bit float.
     Float(f64),
 }
 
