@@ -1,11 +1,14 @@
 use bytes::{BufMut, BytesMut};
 use filepath::FilePath;
 use std::cmp::Ordering;
+use std::io::{Error, SeekFrom};
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use tokio::fs::File;
-use tokio::io::{AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 
 use crate::engine::tsm1::io::index::{IndexEntries, IndexEntry};
-use crate::engine::tsm1::io::{indexCountSize, indexEntrySize, maxIndexEntries};
+use crate::engine::tsm1::io::{fsyncEvery, indexCountSize, indexEntrySize, maxIndexEntries};
 
 /// IndexWriter writes a TSMIndex.
 #[async_trait]
@@ -23,10 +26,11 @@ pub trait IndexWriter {
     fn size(&self) -> u32;
 
     /// marshal_binary returns a byte slice encoded version of the index.
-    fn marshal_binary() -> anyhow::Result<Vec<u8>>;
+    /// for test
+    fn marshal_binary(&self) -> anyhow::Result<Vec<u8>>;
 
     /// write_to writes the index contents to a writer.
-    async fn write_to<W: AsyncWrite + Send>(&mut self, w: W) -> anyhow::Result<i64>;
+    async fn write_to<W: AsyncWrite + Send + Unpin>(&mut self, w: W) -> anyhow::Result<u64>;
 
     async fn close(self, flush: bool) -> anyhow::Result<()>;
 }
@@ -50,16 +54,121 @@ impl Syncer for DefaultSyncer {
     }
 }
 
+#[async_trait]
+pub trait IndexBuffer: AsyncWrite + Unpin + Send {
+    async fn write_to<W: AsyncWrite + Send + Unpin>(&mut self, w: W) -> std::io::Result<u64>;
+    async fn sync(&mut self) -> std::io::Result<()>;
+    async fn clear(self) -> std::io::Result<()>;
+}
+
+struct MemoryIndexBuffer {
+    buf: BytesMut,
+}
+
+impl MemoryIndexBuffer {
+    pub fn new(sz: usize) -> Self {
+        Self {
+            buf: BytesMut::with_capacity(sz),
+        }
+    }
+}
+
+impl AsyncWrite for MemoryIndexBuffer {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, Error>> {
+        self.buf.extend_from_slice(buf);
+        Poll::Ready(Ok(buf.len()))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
+#[async_trait]
+impl IndexBuffer for MemoryIndexBuffer {
+    async fn write_to<W: AsyncWrite + Send + Unpin>(&mut self, mut w: W) -> std::io::Result<u64> {
+        w.write(self.buf.as_ref()).await.map(|w| w as u64)
+    }
+
+    async fn sync(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    async fn clear(self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+struct FileIndexBuffer {
+    fd: File,
+}
+
+impl FileIndexBuffer {
+    pub fn new(fd: File) -> Self {
+        Self { fd }
+    }
+}
+
+#[async_trait]
+impl IndexBuffer for FileIndexBuffer {
+    async fn write_to<W: AsyncWrite + Send + Unpin>(&mut self, mut w: W) -> std::io::Result<u64> {
+        self.fd.seek(SeekFrom::Start(0)).await?;
+        tokio::io::copy(&mut self.fd, &mut w).await
+    }
+
+    async fn sync(&mut self) -> std::io::Result<()> {
+        self.fd.flush().await?;
+        self.fd.sync_all().await
+    }
+
+    async fn clear(self) -> std::io::Result<()> {
+        let fd = self.fd.into_std().await;
+        let path = fd.path()?;
+
+        drop(fd);
+
+        tokio::fs::remove_file(path).await
+    }
+}
+
+impl AsyncWrite for FileIndexBuffer {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, Error>> {
+        Pin::new(&mut self.fd).poll_write(cx, buf)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
+        Pin::new(&mut self.fd).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
+        Pin::new(&mut self.fd).poll_shutdown(cx)
+    }
+}
+
 /// directIndex is a simple in-memory index implementation for a TSM file.  The full index
 /// must fit in memory.
-struct DirectIndex {
+struct DirectIndex<B>
+where
+    B: IndexBuffer + 'static,
+{
     key_count: usize,
     size: u32,
 
     /// The bytes written count of when we last fsync'd
     last_sync: u32,
-    fd: File,
-    buf: BytesMut,
+    buf: B,
 
     f: Box<dyn Syncer>,
 
@@ -67,14 +176,16 @@ struct DirectIndex {
     index_entries: Option<IndexEntries>,
 }
 
-impl DirectIndex {
-    pub fn new(fd: File) -> Self {
+impl<B> DirectIndex<B>
+where
+    B: IndexBuffer + 'static,
+{
+    pub fn new(buf: B) -> Self {
         Self {
             key_count: 0,
             size: 0,
             last_sync: 0,
-            fd,
-            buf: BytesMut::new(),
+            buf,
             f: Box::new(DefaultSyncer {}),
             key: vec![],
             index_entries: None,
@@ -121,21 +232,21 @@ impl DirectIndex {
         let mut total = 0_u64;
 
         // Append the key length
-        self.fd
+        self.buf
             .write(&buf[0..2])
             .await
             .map_err(|e| anyhow!("write: writer key length error: {}", e.to_string()))?;
         total += 2;
 
         // Append the key
-        self.fd
+        self.buf
             .write(self.key.as_slice())
             .await
             .map_err(|e| anyhow!("write: writer key error: {}", e.to_string()))?;
         total += self.key.len() as u64;
 
         // Append the block type and count
-        self.fd.write(&buf[2..5]).await.map_err(|e| {
+        self.buf.write(&buf[2..5]).await.map_err(|e| {
             anyhow!(
                 "write: writer block type and count error: {}",
                 e.to_string()
@@ -145,7 +256,7 @@ impl DirectIndex {
 
         // Append each index entry for all blocks for this key
         let n = index_entries
-            .write_to(&mut self.fd)
+            .write_to(&mut self.buf)
             .await
             .map_err(|e| anyhow!("write: writer entries error: {}", e.to_string()))?;
         total += n;
@@ -153,12 +264,22 @@ impl DirectIndex {
         self.key.clear();
         self.index_entries = None;
 
+        // If this is a disk based index and we've written more than the fsync threshold,
+        // fsync the data to avoid long pauses later on.
+        if self.size - self.last_sync > fsyncEvery as u32 {
+            self.buf.sync().await.map_err(|e| anyhow!(e))?;
+            self.last_sync = self.size;
+        }
+
         Ok(total)
     }
 }
 
 #[async_trait]
-impl IndexWriter for DirectIndex {
+impl<B> IndexWriter for DirectIndex<B>
+where
+    B: IndexBuffer + 'static,
+{
     async fn add(&mut self, key: &[u8], block_type: u8, index_entry: IndexEntry) {
         // Is this the first block being added?
         if self.key.len() == 0 {
@@ -245,33 +366,29 @@ impl IndexWriter for DirectIndex {
         self.size
     }
 
-    fn marshal_binary() -> anyhow::Result<Vec<u8>> {
+    fn marshal_binary(&self) -> anyhow::Result<Vec<u8>> {
         todo!()
     }
 
-    async fn write_to<W: AsyncWrite + Send>(&mut self, w: W) -> anyhow::Result<i64> {
+    async fn write_to<W: AsyncWrite + Send + Unpin>(&mut self, w: W) -> anyhow::Result<u64> {
         self.flush().await?;
-        self.fd.flush().await.map_err(|e| anyhow!(e))?;
+        self.buf.sync().await.map_err(|e| anyhow!(e))?;
+
+        self.buf.write_to(w).await.map_err(|e| anyhow!(e))
     }
 
     async fn close(mut self, flush: bool) -> anyhow::Result<()> {
         if flush {
             // Flush anything remaining in the index
-            self.fd
-                .flush()
+            self.buf
+                .sync()
                 .await
-                .map_err(|e| anyhow!("flush file error: {}", e))?;
+                .map_err(|e| anyhow!("flush buf error: {}", e))?;
         }
 
-        let fd = self.fd.into_std().await;
-        let path = fd
-            .path()
-            .map_err(|e| anyhow!("get file path error: {}", e))?;
-
-        drop(fd);
-
-        tokio::fs::remove_file(path)
+        self.buf
+            .clear()
             .await
-            .map_err(|e| anyhow!("remote file error: {}", e))
+            .map_err(|e| anyhow!("clear buf error: {}", e))
     }
 }

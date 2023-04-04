@@ -1,9 +1,10 @@
 use std::fmt::{Display, Formatter};
 
-use crate::engine::tsm1::io::indexEntrySize;
 use bytes::BufMut;
 use influxdb_utils::time::unix_nano_to_time;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
+
+use crate::engine::tsm1::io::indexEntrySize;
 
 /// IndexEntry is the index information for a given block in a TSM file.
 pub struct IndexEntry {
@@ -103,10 +104,7 @@ impl IndexEntries {
         Ok(buf)
     }
 
-    pub async fn write_to<W: AsyncWrite + std::marker::Unpin>(
-        &self,
-        mut w: W,
-    ) -> anyhow::Result<u64> {
+    pub async fn write_to<W: AsyncWrite + Unpin>(&self, mut w: W) -> anyhow::Result<u64> {
         let mut buf = Vec::with_capacity(indexEntrySize);
         let mut total = 0;
 
