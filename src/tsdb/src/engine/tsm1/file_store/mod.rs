@@ -30,11 +30,17 @@ const MAX_KEY_LENGTH: usize = (1 << (2 * 8)) - 1;
 /// long pauses due to very large fsyncs at the end of writing a TSM file.
 const FSYNC_EVERY: u64 = 25 * 1024 * 1024;
 
+/// The extension used to describe temporary snapshot files.
+pub(crate) const TMP_TSMFILE_EXTENSION: &'static str = "tmp";
+
+/// The extension used to describe corrupt snapshot files.
+pub(crate) const BAD_TSMFILE_EXTENSION: &'static str = "bad";
+
 #[cfg(test)]
 mod tests {
     use bytes::BufMut;
 
-    use crate::engine::tsm1::io::{HEADER, MAGIC_NUMBER, VERSION};
+    use crate::engine::tsm1::file_store::{HEADER, MAGIC_NUMBER, VERSION};
 
     #[test]
     fn test_header() {

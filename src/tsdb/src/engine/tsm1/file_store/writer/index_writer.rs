@@ -9,8 +9,10 @@ use filepath::FilePath;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 
-use crate::engine::tsm1::io::index::{IndexEntries, IndexEntry};
-use crate::engine::tsm1::io::{FSYNC_EVERY, INDEX_COUNT_SIZE, INDEX_ENTRY_SIZE, MAX_INDEX_ENTRIES};
+use crate::engine::tsm1::file_store::index::{IndexEntries, IndexEntry};
+use crate::engine::tsm1::file_store::{
+    FSYNC_EVERY, INDEX_COUNT_SIZE, INDEX_ENTRY_SIZE, MAX_INDEX_ENTRIES,
+};
 
 /// IndexWriter writes a TSMIndex.
 #[async_trait]

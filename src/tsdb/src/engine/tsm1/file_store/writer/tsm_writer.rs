@@ -8,11 +8,11 @@ use tokio::io::AsyncWriteExt;
 use crate::engine::tsm1::block::decoder::block_type;
 use crate::engine::tsm1::block::encoder::encode_block;
 use crate::engine::tsm1::encoding::{TValues, Values};
-use crate::engine::tsm1::io::index::IndexEntry;
-use crate::engine::tsm1::io::writer::index_writer::{
+use crate::engine::tsm1::file_store::index::IndexEntry;
+use crate::engine::tsm1::file_store::writer::index_writer::{
     DirectIndex, FileIndexBuffer, IndexWriter, MemoryIndexBuffer,
 };
-use crate::engine::tsm1::io::{FSYNC_EVERY, HEADER, MAX_INDEX_ENTRIES, MAX_KEY_LENGTH};
+use crate::engine::tsm1::file_store::{FSYNC_EVERY, HEADER, MAX_INDEX_ENTRIES, MAX_KEY_LENGTH};
 
 /// TSMWriter writes TSM formatted key and values.
 #[async_trait]
@@ -262,7 +262,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::engine::tsm1::encoding::{Value, Values};
-    use crate::engine::tsm1::io::writer::tsm_writer::{DefaultTSMWriter, TSMWriter};
+    use crate::engine::tsm1::file_store::writer::tsm_writer::{DefaultTSMWriter, TSMWriter};
 
     #[test]
     fn test_crc() {
