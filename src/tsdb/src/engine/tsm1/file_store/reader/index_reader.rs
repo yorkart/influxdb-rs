@@ -1,5 +1,6 @@
 use crate::engine::tsm1::file_store::index::IndexEntry;
 use crate::engine::tsm1::file_store::reader::tsm_reader::TimeRange;
+use tokio::sync::RwLock;
 
 /// TSMIndex represent the index section of a TSM file.  The index records all
 /// blocks, their locations, sizes, min and max times.
@@ -67,4 +68,10 @@ pub trait TSMIndex {
 
     /// close closes the index and releases any resources.
     async fn close(&mut self) -> anyhow::Result<()>;
+}
+
+// IndirectIndex is a TSMIndex that uses a raw byte slice representation of an index.  This
+// implementation can be used for indexes that may be MMAPed into memory.
+pub(crate) struct IndirectIndex {
+    mu: RwLock<bool>,
 }

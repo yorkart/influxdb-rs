@@ -9,27 +9,37 @@ name = "influxdb_tsdb"
 [dependencies.influxdb-query]
 version = "0.1.0"
 path = "../query"
+[dependencies.influxdb-storage]
+version = "0.1.0"
+path = "../storage"
 [dependencies.influxdb-utils]
 version = "0.1.0"
 path = "../utils"
 
 [dependencies]
 bytes = "1"
+byteorder = "1.3"
 dashmap = "5.3"
 chrono = "0.4"
 trait_enum = "0.5"
 anyhow = "1.0"
 thiserror = "1.0"
-#bumpalo = "3.9"
 ordered-float = { version = "3.0", default-features = false }
+filepath = "0.1"
+
 murmur3 = "0.5"
+crc32fast = "1.3"
+snap = "1"
+
+# limiter
+governor = "0.5"
+# arena https://manishearth.github.io/blog/2021/03/15/arenas-in-rust/
+bumpalo = "3.12"
+
+tracing = "0.1"
 
 async-trait = "0.1"
 tokio = {version = "1",  features = ["full"]}
-filepath = "0.1"
-snap = "1"
-crc32fast = "1.3"
-#fmmap = { version = "0.3", features = ["tokio-async"] }
 
 [dev-dependencies]
 rand = "0.8"
