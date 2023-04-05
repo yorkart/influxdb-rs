@@ -31,24 +31,28 @@ pub trait TSMIndex {
     /// exist in this file, but not have a point exactly at time t.
     async fn contains_value(&self, key: &[u8], timestamp: i64) -> bool;
 
-    /// read_entries reads the index entries for key into entries.
-    async fn read_entries(&mut self, key: &[u8], entries: &mut Vec<IndexEntry>);
+    /// entries reads the index entries for key into entries.
+    async fn entries(&self, key: &[u8], entries: &mut IndexEntries) -> anyhow::Result<()>;
 
     /// entry returns the index entry for the specified key and timestamp.  If no entry
     /// matches the key and timestamp, nil is returned.
-    async fn entry(&mut self, key: &[u8], timestamp: i64) -> IndexEntry;
+    async fn entry(&self, key: &[u8], timestamp: i64) -> IndexEntry;
 
     /// key returns the key in the index at the given position, using entries to avoid allocations.
-    async fn key(&mut self, index: usize, entries: &mut Vec<IndexEntry>) -> (&[u8], u8);
+    async fn key(
+        &self,
+        index: usize,
+        entries: &mut IndexEntries,
+    ) -> anyhow::Result<Option<Vec<u8>>>;
 
     /// key_at returns the key in the index at the given position.
-    async fn key_at(&mut self, index: usize) -> (&[u8], u8);
+    async fn key_at(&mut self, index: usize) -> anyhow::Result<Option<(Vec<u8>, u8)>>;
 
     /// key_count returns the count of unique keys in the index.
     async fn key_count(&self) -> usize;
 
     /// seek returns the position in the index where key <= value in the index.
-    async fn seek(&mut self, key: &[u8]) -> anyhow::Result<u64>;
+    async fn seek(&self, key: &[u8]) -> anyhow::Result<u64>;
 
     /// overlaps_time_range returns true if the time range of the file intersect min and max.
     fn overlaps_time_range(&self, min: i64, max: i64) -> bool;
@@ -231,17 +235,20 @@ impl IndirectIndex {
 
     /// search_offset searches the offsets slice for key and returns the position in
     /// offsets where key would exist.
-    async fn search_offset(&self, key: &[u8]) -> anyhow::Result<u64> {
-        let offsets = self.offsets.read().await;
+    async fn search_offset(&self, offsets: &[u64], key: &[u8]) -> anyhow::Result<Option<usize>> {
+        if !self.contains_key(key) {
+            return Ok(None);
+        }
+
         let i = self
-            .binary_search(offsets.as_slice(), key)
+            .binary_search(offsets, key)
             .await
             .map_err(|e| anyhow!(e))?;
         if i < 0 {
-            return Err(anyhow!("key `{:?}` not found", key));
+            return Ok(None);
         }
 
-        Ok(offsets[i as usize])
+        Ok(Some(i as usize))
     }
 }
 
@@ -267,20 +274,73 @@ impl TSMIndex for IndirectIndex {
         todo!()
     }
 
-    async fn read_entries(&mut self, key: &[u8], entries: &mut Vec<IndexEntry>) {
-        todo!()
-    }
-
-    async fn entry(&mut self, key: &[u8], timestamp: i64) -> IndexEntry {
-        todo!()
-    }
-
-    async fn key(&mut self, index: usize, entries: &mut Vec<IndexEntry>) -> (&[u8], u8) {
+    async fn entries(&self, key: &[u8], entries: &mut IndexEntries) -> anyhow::Result<()> {
         let offsets = self.offsets.read().await;
+        let offset_index = self.search_offset(offsets.as_slice(), key).await?;
+        if let Some(index) = offset_index {
+            let k = self.key(index, entries).await?.unwrap(); // panic when is None
+            if !k.as_slice().cmp(key).is_eq() {
+                return Err(anyhow!(
+                    "key is inconsistency, expect: {:?}, found: {:?}",
+                    key,
+                    k.as_slice()
+                ));
+            }
+        }
+
+        Ok(())
     }
 
-    async fn key_at(&mut self, index: usize) -> (&[u8], u8) {
+    async fn entry(&self, key: &[u8], timestamp: i64) -> IndexEntry {
         todo!()
+    }
+
+    async fn key(
+        &self,
+        index: usize,
+        entries: &mut IndexEntries,
+    ) -> anyhow::Result<Option<Vec<u8>>> {
+        let offsets = self.offsets.read().await;
+        if index >= offsets.len() {
+            return Ok(None);
+        }
+
+        let mut offset = offsets[index];
+        let (n, key) = read_key(&self.accessor, offset)
+            .await
+            .map_err(|e| anyhow!(e))?;
+        offset += n as u64;
+
+        let _ = read_entries(
+            &self.accessor,
+            offset,
+            self.index_offset + self.index_len as u64,
+            entries,
+        )
+        .await?;
+
+        Ok(Some(key))
+    }
+
+    async fn key_at(&mut self, index: usize) -> anyhow::Result<Option<(Vec<u8>, u8)>> {
+        let offsets = self.offsets.read().await;
+        if index >= offsets.len() {
+            return Ok(None);
+        }
+
+        let mut offset = offsets[index];
+        let (n, key) = read_key(&self.accessor, offset)
+            .await
+            .map_err(|e| anyhow!(e))?;
+        offset += n as u64;
+
+        let typ = self
+            .accessor
+            .read_u8(offset)
+            .await
+            .map_err(|e| anyhow!(e))?;
+
+        Ok(Some((key, typ)))
     }
 
     async fn key_count(&self) -> usize {
@@ -288,8 +348,13 @@ impl TSMIndex for IndirectIndex {
         offsets.len()
     }
 
-    async fn seek(&mut self, key: &[u8]) -> anyhow::Result<u64> {
-        self.search_offset(key).await
+    async fn seek(&self, key: &[u8]) -> anyhow::Result<u64> {
+        let offsets = self.offsets.read().await;
+        let offset_index = self
+            .search_offset(offsets.as_slice(), key)
+            .await?
+            .ok_or(anyhow!("key not found"))?;
+        Ok(offsets[offset_index])
     }
 
     fn overlaps_time_range(&self, min: i64, max: i64) -> bool {
@@ -317,7 +382,13 @@ impl TSMIndex for IndirectIndex {
     }
 
     async fn block_type(&self, key: &[u8]) -> anyhow::Result<u8> {
-        let offset = self.search_offset(key).await?;
+        let offsets = self.offsets.read().await;
+        let offset_index = self
+            .search_offset(offsets.as_slice(), key)
+            .await?
+            .ok_or(anyhow!("key not found"))?;
+        let offset = offsets[offset_index];
+
         let (n, _key) = read_key(&self.accessor, offset).await?;
 
         let typ = self
@@ -351,6 +422,7 @@ async fn read_entries(
     max_offset: u64,
     entries: &mut IndexEntries,
 ) -> anyhow::Result<u64> {
+    // check space: | type(1B) | count(2B) |
     if max_offset - offset < (1 + INDEX_COUNT_SIZE) as u64 {
         return Err(anyhow!("readEntries: data too short for headers"));
     }

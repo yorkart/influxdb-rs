@@ -87,7 +87,7 @@ impl Display for IndexEntry {
 }
 
 #[derive(Default)]
-pub(crate) struct IndexEntries {
+pub struct IndexEntries {
     pub typ: u8,
     pub entries: Vec<IndexEntry>,
 }
