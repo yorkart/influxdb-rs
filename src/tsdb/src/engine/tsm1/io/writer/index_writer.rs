@@ -1,14 +1,16 @@
-use bytes::{BufMut, BytesMut};
-use filepath::FilePath;
 use std::cmp::Ordering;
 use std::io::{Error, SeekFrom};
+use std::path::Path;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use tokio::fs::File;
+
+use bytes::{BufMut, BytesMut};
+use filepath::FilePath;
+use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 
 use crate::engine::tsm1::io::index::{IndexEntries, IndexEntry};
-use crate::engine::tsm1::io::{fsyncEvery, indexCountSize, indexEntrySize, maxIndexEntries};
+use crate::engine::tsm1::io::{FSYNC_EVERY, INDEX_COUNT_SIZE, INDEX_ENTRY_SIZE, MAX_INDEX_ENTRIES};
 
 /// IndexWriter writes a TSMIndex.
 #[async_trait]
@@ -61,7 +63,7 @@ pub trait IndexBuffer: AsyncWrite + Unpin + Send {
     async fn clear(self) -> std::io::Result<()>;
 }
 
-struct MemoryIndexBuffer {
+pub(crate) struct MemoryIndexBuffer {
     buf: BytesMut,
 }
 
@@ -107,7 +109,7 @@ impl IndexBuffer for MemoryIndexBuffer {
     }
 }
 
-struct FileIndexBuffer {
+pub(crate) struct FileIndexBuffer {
     fd: File,
 }
 
@@ -159,7 +161,7 @@ impl AsyncWrite for FileIndexBuffer {
 
 /// directIndex is a simple in-memory index implementation for a TSM file.  The full index
 /// must fit in memory.
-struct DirectIndex<B>
+pub(crate) struct DirectIndex<B>
 where
     B: IndexBuffer + 'static,
 {
@@ -174,6 +176,40 @@ where
 
     key: Vec<u8>,
     index_entries: Option<IndexEntries>,
+}
+
+impl DirectIndex<MemoryIndexBuffer> {
+    pub fn with_mem_buffer(sz: usize) -> Self {
+        Self {
+            key_count: 0,
+            size: 0,
+            last_sync: 0,
+            buf: MemoryIndexBuffer::new(sz),
+            f: Box::new(DefaultSyncer {}),
+            key: vec![],
+            index_entries: None,
+        }
+    }
+}
+
+impl DirectIndex<FileIndexBuffer> {
+    pub async fn with_disk_buffer(idx_path: impl AsRef<Path>) -> anyhow::Result<Self> {
+        let idx_fd = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(idx_path)
+            .await
+            .map_err(|e| anyhow!(e))?;
+        Ok(Self {
+            key_count: 0,
+            size: 0,
+            last_sync: 0,
+            buf: FileIndexBuffer::new(idx_fd),
+            f: Box::new(DefaultSyncer {}),
+            key: vec![],
+            index_entries: None,
+        })
+    }
 }
 
 impl<B> DirectIndex<B>
@@ -213,12 +249,12 @@ where
         // For each key, individual entries are sorted by time
         let mut index_entries = self.index_entries.take().unwrap();
 
-        if index_entries.entries.len() > maxIndexEntries {
+        if index_entries.entries.len() > MAX_INDEX_ENTRIES {
             return Err(anyhow!(
                 "key '{:?}' exceeds max index entries: {} > {}",
                 self.key.as_slice(),
                 index_entries.entries.len(),
-                maxIndexEntries
+                MAX_INDEX_ENTRIES
             ));
         }
 
@@ -266,7 +302,7 @@ where
 
         // If this is a disk based index and we've written more than the fsync threshold,
         // fsync the data to avoid long pauses later on.
-        if self.size - self.last_sync > fsyncEvery as u32 {
+        if self.size - self.last_sync > FSYNC_EVERY as u32 {
             self.buf.sync().await.map_err(|e| anyhow!(e))?;
             self.last_sync = self.size;
         }
@@ -286,7 +322,7 @@ where
             // size of the key stored in the index
             self.size += (2 + key.len()) as u32;
             // size of the count of entries stored in the index
-            self.size += indexCountSize as u32;
+            self.size += INDEX_COUNT_SIZE as u32;
 
             self.key.extend_from_slice(key);
             if self.index_entries.is_none() {
@@ -298,7 +334,7 @@ where
             index_entries.entries.push(index_entry);
 
             // size of the encoded index entry
-            self.size += indexEntrySize as u32;
+            self.size += INDEX_ENTRY_SIZE as u32;
             self.key_count += 1;
 
             return;
@@ -312,7 +348,7 @@ where
                 index_entries.entries.push(index_entry);
 
                 // size of the encoded index entry
-                self.size += indexEntrySize as u32;
+                self.size += INDEX_ENTRY_SIZE as u32;
             }
             Ordering::Less => {
                 self.flush();
@@ -322,7 +358,7 @@ where
                 // size of the key stored in the index
                 self.size += (2 + key.len()) as u32;
                 // size of the count of entries stored in the index
-                self.size += indexCountSize as u32;
+                self.size += INDEX_COUNT_SIZE as u32;
 
                 self.key.clear();
                 self.key.extend_from_slice(key);
@@ -332,7 +368,7 @@ where
                 index_entries.entries.push(index_entry);
 
                 // size of the encoded index entry
-                self.size += indexEntrySize as u32;
+                self.size += INDEX_ENTRY_SIZE as u32;
                 self.key_count += 1;
             }
             Ordering::Greater => {
@@ -373,7 +409,6 @@ where
     async fn write_to<W: AsyncWrite + Send + Unpin>(&mut self, w: W) -> anyhow::Result<u64> {
         self.flush().await?;
         self.buf.sync().await.map_err(|e| anyhow!(e))?;
-
         self.buf.write_to(w).await.map_err(|e| anyhow!(e))
     }
 

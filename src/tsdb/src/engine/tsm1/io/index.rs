@@ -4,7 +4,7 @@ use bytes::BufMut;
 use influxdb_utils::time::unix_nano_to_time;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 
-use crate::engine::tsm1::io::indexEntrySize;
+use crate::engine::tsm1::io::INDEX_ENTRY_SIZE;
 
 /// IndexEntry is the index information for a given block in a TSM file.
 pub struct IndexEntry {
@@ -13,14 +13,14 @@ pub struct IndexEntry {
     pub max_time: i64,
 
     /// The absolute position in the file where this block is located.
-    pub offset: i64,
+    pub offset: u64,
 
     /// The size in bytes of the block in the file.
     pub size: u32,
 }
 
 impl IndexEntry {
-    pub fn new(min_time: i64, max_time: i64, offset: i64, size: u32) -> Self {
+    pub fn new(min_time: i64, max_time: i64, offset: u64, size: u32) -> Self {
         Self {
             min_time,
             max_time,
@@ -31,17 +31,17 @@ impl IndexEntry {
 
     /// unmarshal_binary decodes an IndexEntry from a byte slice.
     pub fn unmarshal_binary(&mut self, b: &[u8]) -> anyhow::Result<()> {
-        if b.len() < indexEntrySize {
+        if b.len() < INDEX_ENTRY_SIZE {
             return Err(anyhow!(
                 "unmarshalBinary: short buf: {} < {}",
                 b.len(),
-                indexEntrySize
+                INDEX_ENTRY_SIZE
             ));
         }
 
         self.min_time = u64::from_be_bytes(b[..8].try_into().unwrap()) as i64; //  int64(binary.BigEndian.Uint64(b[:8]))
         self.max_time = u64::from_be_bytes(b[8..16].try_into().unwrap()) as i64; // int64(binary.BigEndian.Uint64(b[8:16]))
-        self.offset = u64::from_be_bytes(b[16..24].try_into().unwrap()) as i64; //int64(binary.BigEndian.Uint64(b[16:24]))
+        self.offset = u64::from_be_bytes(b[16..24].try_into().unwrap()); //int64(binary.BigEndian.Uint64(b[16:24]))
         self.size = u32::from_be_bytes(b[24..28].try_into().unwrap()); //binary.BigEndian.Uint32(b[24:28])
 
         Ok(())
@@ -95,7 +95,7 @@ impl IndexEntries {
     }
 
     pub fn marshal_binary(&self) -> anyhow::Result<Vec<u8>> {
-        let mut buf = Vec::with_capacity(self.entries.len() * indexEntrySize);
+        let mut buf = Vec::with_capacity(self.entries.len() * INDEX_ENTRY_SIZE);
 
         for entry in &self.entries {
             entry.append_to(&mut buf);
@@ -105,7 +105,7 @@ impl IndexEntries {
     }
 
     pub async fn write_to<W: AsyncWrite + Unpin>(&self, mut w: W) -> anyhow::Result<u64> {
-        let mut buf = Vec::with_capacity(indexEntrySize);
+        let mut buf = Vec::with_capacity(INDEX_ENTRY_SIZE);
         let mut total = 0;
 
         for entry in &self.entries {

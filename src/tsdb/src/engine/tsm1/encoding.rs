@@ -250,6 +250,18 @@ pub enum Values {
     Unsigned(Vec<Value<u64>>),
 }
 
+impl Values {
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Float(values) => values.len(),
+            Self::Integer(values) => values.len(),
+            Self::Bool(values) => values.len(),
+            Self::Str(values) => values.len(),
+            Self::Unsigned(values) => values.len(),
+        }
+    }
+}
+
 impl TValues for Values {
     fn min_time(&self) -> i64 {
         match self {
