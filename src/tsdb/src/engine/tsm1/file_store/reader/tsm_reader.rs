@@ -21,6 +21,12 @@ impl TimeRange {
     }
 }
 
+/// TimeRange holds a min and max timestamp.
+pub struct KeyRange<'a, 'b> {
+    min: &'a [u8],
+    max: &'b [u8],
+}
+
 /// TSMFile represents an on-disk TSM file.
 #[async_trait]
 pub trait TSMReader {

@@ -77,7 +77,7 @@ mod tests {
             len
         };
 
-        let mut accessor = MmapReadableFile::open(&tsm_file).await?;
+        let accessor = MmapReadableFile::open(&tsm_file).await?;
 
         let mut buf = Vec::with_capacity(len);
         buf.resize(len, 0_u8);

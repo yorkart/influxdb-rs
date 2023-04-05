@@ -30,7 +30,7 @@ impl IndexEntry {
     }
 
     /// unmarshal_binary decodes an IndexEntry from a byte slice.
-    pub fn unmarshal_binary(&mut self, b: &[u8]) -> anyhow::Result<()> {
+    pub fn unmarshal_binary(b: &[u8]) -> anyhow::Result<Self> {
         if b.len() < INDEX_ENTRY_SIZE {
             return Err(anyhow!(
                 "unmarshalBinary: short buf: {} < {}",
@@ -39,12 +39,17 @@ impl IndexEntry {
             ));
         }
 
-        self.min_time = u64::from_be_bytes(b[..8].try_into().unwrap()) as i64; //  int64(binary.BigEndian.Uint64(b[:8]))
-        self.max_time = u64::from_be_bytes(b[8..16].try_into().unwrap()) as i64; // int64(binary.BigEndian.Uint64(b[8:16]))
-        self.offset = u64::from_be_bytes(b[16..24].try_into().unwrap()); //int64(binary.BigEndian.Uint64(b[16:24]))
-        self.size = u32::from_be_bytes(b[24..28].try_into().unwrap()); //binary.BigEndian.Uint32(b[24:28])
+        let min_time = u64::from_be_bytes(b[..8].try_into().unwrap()) as i64; //  int64(binary.BigEndian.Uint64(b[:8]))
+        let max_time = u64::from_be_bytes(b[8..16].try_into().unwrap()) as i64; // int64(binary.BigEndian.Uint64(b[8:16]))
+        let offset = u64::from_be_bytes(b[16..24].try_into().unwrap()); //int64(binary.BigEndian.Uint64(b[16:24]))
+        let size = u32::from_be_bytes(b[24..28].try_into().unwrap()); //binary.BigEndian.Uint32(b[24:28])
 
-        Ok(())
+        Ok(Self {
+            min_time,
+            max_time,
+            offset,
+            size,
+        })
     }
 
     /// append_to writes a binary-encoded version of IndexEntry to b, allocating
@@ -81,6 +86,7 @@ impl Display for IndexEntry {
     }
 }
 
+#[derive(Default)]
 pub(crate) struct IndexEntries {
     pub typ: u8,
     pub entries: Vec<IndexEntry>,
@@ -92,6 +98,21 @@ impl IndexEntries {
             typ,
             entries: vec![],
         }
+    }
+
+    pub fn set_block_type(&mut self, typ: u8) {
+        self.typ = typ;
+    }
+
+    pub fn clear_with_cap(&mut self, cap: usize) {
+        if self.entries.capacity() < cap {
+            self.entries.reserve_exact(cap - self.entries.len());
+        }
+        self.entries.clear();
+    }
+
+    pub fn push(&mut self, entry: IndexEntry) {
+        self.entries.push(entry);
     }
 
     pub fn marshal_binary(&self) -> anyhow::Result<Vec<u8>> {
