@@ -1,11 +1,9 @@
 #[macro_use]
-extern crate trait_enum;
-#[macro_use]
 extern crate anyhow;
 #[macro_use]
 extern crate async_trait;
 
-pub mod cache;
+// pub mod cache;
 pub mod engine;
 
 #[cfg(test)]

@@ -240,6 +240,12 @@ where
     }
 }
 
+pub type FloatValues = Vec<Value<f64>>;
+pub type IntegerValues = Vec<Value<i64>>;
+pub type BooleanValues = Vec<Value<bool>>;
+pub type StringValues = Vec<Value<u8>>;
+pub type UnsignedValues = Vec<Value<u64>>;
+
 /// Values describes the various types of block data that can be held within a TSM file.
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum Values {

@@ -1,4 +1,6 @@
 pub mod index;
+pub mod reader;
+pub mod stat;
 pub mod writer;
 
 /// MAGIC_NUMBER is written as the first 4 bytes of a data file to
@@ -11,13 +13,13 @@ const VERSION: u8 = 1;
 /// Block's header: | magic number(4B) | VERSION(1B) |
 const HEADER: [u8; 5] = [22, 209, 22, 209, 1];
 
-/// Size in bytes of an index entry
+/// size in bytes of an index entry
 const INDEX_ENTRY_SIZE: usize = 28;
 
-/// Size in bytes used to store the count of index entries for a key
+/// size in bytes used to store the count of index entries for a key
 const INDEX_COUNT_SIZE: usize = 2;
 
-/// Size in bytes used to store the type of block encoded
+/// size in bytes used to store the type of block encoded
 const INDEX_TYPE_SIZE: usize = 1;
 
 /// Max number of blocks for a given key that can exist in a single file

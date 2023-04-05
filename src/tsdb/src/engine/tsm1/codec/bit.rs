@@ -83,8 +83,8 @@ pub trait Write {
 #[derive(Debug)]
 pub struct BufferedReader<'a> {
     bytes: &'a [u8], // internal buffer of bytes
-    index: usize,   // index into bytes
-    pos: u32,       // position in the byte we are currenlty reading
+    index: usize,    // index into bytes
+    pos: u32,        // position in the byte we are currenlty reading
 }
 
 impl<'a> BufferedReader<'a> {

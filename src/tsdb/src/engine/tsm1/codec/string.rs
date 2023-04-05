@@ -99,9 +99,9 @@ impl StringDecoder {
         })
     }
 
-    /// Read returns the next value from the decoder.
+    /// read_range returns the next value from the decoder.
     fn read_range(&mut self) -> anyhow::Result<(usize, usize)> {
-        // Read the length of the string
+        // read the length of the string
         let r = u64::decode_var(&self.b[self.i..]);
         if r.is_none() {
             return Err(anyhow!("StringDecoder: invalid encoded string length"));
