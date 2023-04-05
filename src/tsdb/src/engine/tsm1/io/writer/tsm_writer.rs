@@ -261,10 +261,40 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::engine::tsm1::encoding::{Value, Values};
+    use crate::engine::tsm1::io::writer::tsm_writer::{DefaultTSMWriter, TSMWriter};
 
     #[test]
     fn test_crc() {
         let checksum = crc32fast::hash("adsafafas".as_bytes());
         assert_eq!(checksum, 2344674872);
+    }
+
+    #[tokio::test]
+    async fn test_tsm_writer_write_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let tsm_file = dir.as_ref().join("tsm1_test");
+        println!("{}", tsm_file.to_str().unwrap());
+
+        let mut w = DefaultTSMWriter::with_mem_buffer(&tsm_file).await.unwrap();
+
+        let values = Values::Float(vec![Value::new(0, 1.0)]);
+
+        w.write("cpu".as_bytes(), values).await.unwrap();
+        w.write_index().await.unwrap();
+        w.close().await.unwrap();
+
+        let data = tokio::fs::read(tsm_file).await.unwrap();
+        let checksum = crc32fast::hash(data.as_slice());
+        assert_eq!(checksum, 1704948981);
+        assert_eq!(
+            data.as_slice(),
+            &[
+                22, 209, 22, 209, 1, 227, 243, 238, 20, 0, 9, 28, 0, 0, 0, 0, 0, 0, 0, 0, 16, 63,
+                240, 0, 0, 0, 0, 0, 0, 195, 252, 0, 128, 0, 0, 0, 0, 0, 16, 0, 3, 99, 112, 117, 0,
+                0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0,
+                0, 34, 0, 0, 0, 0, 0, 0, 0, 39
+            ]
+        );
     }
 }
