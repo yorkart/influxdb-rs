@@ -24,7 +24,7 @@ pub trait TSMIndex {
     fn contains_key(&self, key: &[u8]) -> bool;
 
     /// contains return true if the given key exists in the index.
-    async fn contains(&self, key: &[u8]) -> bool;
+    async fn contains(&self, key: &[u8]) -> anyhow::Result<bool>;
 
     /// contains_value returns true if key and time might exist in this file.  This function could
     /// return true even though the actual point does not exists.  For example, the key may
@@ -36,7 +36,7 @@ pub trait TSMIndex {
 
     /// entry returns the index entry for the specified key and timestamp.  If no entry
     /// matches the key and timestamp, nil is returned.
-    async fn entry(&self, key: &[u8], timestamp: i64) -> IndexEntry;
+    async fn entry(&self, key: &[u8], timestamp: i64) -> anyhow::Result<Option<IndexEntry>>;
 
     /// key returns the key in the index at the given position, using entries to avoid allocations.
     async fn key(
@@ -266,8 +266,16 @@ impl TSMIndex for IndirectIndex {
         key.cmp(self.min_key.as_slice()).is_ge() && key.cmp(self.max_key.as_slice()).is_le()
     }
 
-    async fn contains(&self, key: &[u8]) -> bool {
-        todo!()
+    // TODO optimization: 能多大key，就可以判断是否存在了
+    async fn contains(&self, key: &[u8]) -> anyhow::Result<bool> {
+        // let mut entries = IndexEntries::default();
+        // self.entries(key, &mut entries).await?;
+        // Ok(entries.entries.len() > 0)
+
+        // optimization
+        let offsets = self.offsets.read().await;
+        let offset_index = self.search_offset(offsets.as_slice(), key).await?;
+        Ok(offset_index.is_some())
     }
 
     async fn contains_value(&self, key: &[u8], timestamp: i64) -> bool {
@@ -278,7 +286,10 @@ impl TSMIndex for IndirectIndex {
         let offsets = self.offsets.read().await;
         let offset_index = self.search_offset(offsets.as_slice(), key).await?;
         if let Some(index) = offset_index {
-            let k = self.key(index, entries).await?.unwrap(); // panic when is None
+            let k = self
+                .key(index, entries)
+                .await?
+                .ok_or(anyhow!("read index at {} error", index))?;
             if !k.as_slice().cmp(key).is_eq() {
                 return Err(anyhow!(
                     "key is inconsistency, expect: {:?}, found: {:?}",
@@ -291,8 +302,17 @@ impl TSMIndex for IndirectIndex {
         Ok(())
     }
 
-    async fn entry(&self, key: &[u8], timestamp: i64) -> IndexEntry {
-        todo!()
+    // TODO optimization: 先读取完整entry集合，再时间过滤，复杂度较高
+    async fn entry(&self, key: &[u8], timestamp: i64) -> anyhow::Result<Option<IndexEntry>> {
+        let mut entries = IndexEntries::default();
+        self.entries(key, &mut entries).await?;
+
+        for entry in entries.entries {
+            if entry.contains(timestamp) {
+                return Ok(Some(entry));
+            }
+        }
+        return Ok(None);
     }
 
     async fn key(
