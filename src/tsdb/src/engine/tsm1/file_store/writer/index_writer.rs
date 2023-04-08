@@ -18,7 +18,12 @@ use crate::engine::tsm1::file_store::{
 #[async_trait]
 pub trait IndexWriter {
     /// add records a new block entry for a key in the index.
-    async fn add(&mut self, key: &[u8], block_type: u8, index_entry: IndexEntry);
+    async fn add(
+        &mut self,
+        key: &[u8],
+        block_type: u8,
+        index_entry: IndexEntry,
+    ) -> anyhow::Result<()>;
 
     /// entries returns all index entries for a key.
     fn entries(&self, key: &[u8]) -> Option<&[IndexEntry]>;
@@ -318,7 +323,12 @@ impl<B> IndexWriter for DirectIndex<B>
 where
     B: IndexBuffer + 'static,
 {
-    async fn add(&mut self, key: &[u8], block_type: u8, index_entry: IndexEntry) {
+    async fn add(
+        &mut self,
+        key: &[u8],
+        block_type: u8,
+        index_entry: IndexEntry,
+    ) -> anyhow::Result<()> {
         // Is this the first block being added?
         if self.key.len() == 0 {
             // size of the key stored in the index
@@ -339,7 +349,7 @@ where
             self.size += INDEX_ENTRY_SIZE as u32;
             self.key_count += 1;
 
-            return;
+            return Ok(());
         }
 
         match self.key.as_slice().cmp(key) {
@@ -353,7 +363,7 @@ where
                 self.size += INDEX_ENTRY_SIZE as u32;
             }
             Ordering::Less => {
-                self.flush();
+                self.flush().await?;
                 // We have a new key that is greater than the last one so we need to add
                 // a new index block section.
 
@@ -382,6 +392,8 @@ where
                 );
             }
         }
+
+        Ok(())
     }
 
     fn entries(&self, key: &[u8]) -> Option<&[IndexEntry]> {

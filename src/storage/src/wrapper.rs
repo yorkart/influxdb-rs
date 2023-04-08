@@ -1,20 +1,29 @@
+use bytes::Bytes;
 use std::io::Error;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use futures::AsyncWrite;
 
-pub(crate) struct TokioWriter<'a> {
-    w: &'a mut crate::opendal::Writer,
+pub struct TokioWriter {
+    w: crate::opendal::Writer,
 }
 
-impl<'a> TokioWriter<'a> {
-    pub fn new(w: &'a mut crate::opendal::Writer) -> Self {
+impl TokioWriter {
+    pub fn new(w: crate::opendal::Writer) -> Self {
         Self { w }
+    }
+
+    pub async fn append(&mut self, bs: impl Into<Bytes>) -> opendal::Result<()> {
+        self.w.append(bs).await
+    }
+
+    pub async fn close(&mut self) -> opendal::Result<()> {
+        self.w.close().await
     }
 }
 
-impl<'a> tokio::io::AsyncWrite for TokioWriter<'a> {
+impl tokio::io::AsyncWrite for TokioWriter {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,

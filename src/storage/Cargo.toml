@@ -7,6 +7,8 @@ edition = "2021"
 name = "influxdb_storage"
 
 [dependencies]
+bytes = "1"
+
 async-trait = "0.1"
 tokio = {version = "1",  features = ["full"]}
 futures = { version = "0.3", features = ["alloc"] }

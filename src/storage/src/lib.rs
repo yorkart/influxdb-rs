@@ -1,8 +1,6 @@
 #[macro_use]
 extern crate async_trait;
 
-use crate::wrapper::TokioWriter;
-
 pub mod file;
 pub mod wrapper;
 
@@ -16,7 +14,13 @@ pub mod opendal {
     pub mod layers {
         pub use opendal::layers::*;
     }
+
+    pub mod raw {
+        pub use opendal::raw::*;
+    }
 }
+
+pub type Writer = crate::wrapper::TokioWriter;
 
 pub fn operator() -> std::io::Result<crate::opendal::Operator> {
     let mut builder = opendal::services::Fs::default();
@@ -29,13 +33,13 @@ pub fn operator() -> std::io::Result<crate::opendal::Operator> {
     Ok(operator)
 }
 
-pub async fn copy(
-    reader: &mut crate::opendal::Reader,
-    writer: &mut crate::opendal::Writer,
-) -> std::io::Result<u64> {
-    let mut writer = TokioWriter::new(writer);
-    tokio::io::copy(reader, &mut writer).await
-}
+// pub async fn copy(
+//     reader: &mut crate::opendal::Reader,
+//     writer: &mut crate::Writer,
+// ) -> std::io::Result<u64> {
+//     let mut writer = TokioWriter::new(writer);
+//     tokio::io::copy(reader, &mut writer).await
+// }
 
 #[async_trait]
 pub trait RandomAccess: Send + Sync {

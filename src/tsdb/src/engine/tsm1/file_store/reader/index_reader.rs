@@ -411,7 +411,7 @@ impl TSMIndex for IndirectIndex {
             // If there are any gaps, we abort.
             // 检查所有的tombstones是否时连续的，如果连续的，计算出起始两个时间点，即min & max
             {
-                let mut tombstones = self.tombstones.read().await;
+                let tombstones = self.tombstones.read().await;
                 let new_ts = tombstones.get(del_key).unwrap();
 
                 let mut min_ts = new_ts[0].min;

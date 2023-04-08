@@ -184,7 +184,7 @@ where
             offset: self.n,
             size: n as u32,
         };
-        self.index.add(key, block_type, index_entry).await;
+        self.index.add(key, block_type, index_entry).await?;
 
         // Increment file position pointer
         self.n += n as u64;
