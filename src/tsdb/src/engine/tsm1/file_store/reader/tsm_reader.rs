@@ -6,9 +6,10 @@ use crate::engine::tsm1::file_store::reader::batch_deleter::BatchDeleter;
 use crate::engine::tsm1::file_store::stat::{FileStat, TombstoneStat};
 
 /// TimeRange holds a min and max timestamp.
+#[derive(Clone)]
 pub struct TimeRange {
-    min: i64,
-    max: i64,
+    pub(crate) min: i64,
+    pub(crate) max: i64,
 }
 
 impl TimeRange {
@@ -16,8 +17,8 @@ impl TimeRange {
         Self { min, max }
     }
 
-    pub fn overlaps(&self, min: i64, max: i64) -> bool {
-        self.min <= max && self.max >= min
+    pub fn overlaps(&self, other: &TimeRange) -> bool {
+        self.min <= other.max && self.max >= other.min
     }
 }
 

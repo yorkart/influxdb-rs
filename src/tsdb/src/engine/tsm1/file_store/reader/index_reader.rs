@@ -9,15 +9,22 @@ use crate::engine::tsm1::file_store::index::{IndexEntries, IndexEntry};
 use crate::engine::tsm1::file_store::reader::tsm_reader::TimeRange;
 use crate::engine::tsm1::file_store::{INDEX_COUNT_SIZE, INDEX_ENTRY_SIZE};
 
+const NIL_OFFSET: u64 = u64::MAX;
+
 /// TSMIndex represent the index section of a TSM file.  The index records all
 /// blocks, their locations, sizes, min and max times.
 #[async_trait]
 pub trait TSMIndex {
     /// delete removes the given keys from the index.
-    async fn delete(&mut self, keys: &[&[u8]]);
+    async fn delete(&mut self, keys: &mut [&[u8]]) -> anyhow::Result<()>;
 
     /// delete_range removes the given keys with data between min_time and max_time from the index.
-    async fn delete_range(&mut self, keys: &[&[u8]], min_time: i64, max_time: i64);
+    async fn delete_range(
+        &mut self,
+        keys: &mut [&[u8]],
+        min_time: i64,
+        max_time: i64,
+    ) -> anyhow::Result<()>;
 
     /// contains_key returns true if the given key may exist in the index.  This func is faster than
     /// contains but, may return false positives.
@@ -29,7 +36,7 @@ pub trait TSMIndex {
     /// contains_value returns true if key and time might exist in this file.  This function could
     /// return true even though the actual point does not exists.  For example, the key may
     /// exist in this file, but not have a point exactly at time t.
-    async fn contains_value(&self, key: &[u8], timestamp: i64) -> bool;
+    async fn contains_value(&self, key: &[u8], timestamp: i64) -> anyhow::Result<bool>;
 
     /// entries reads the index entries for key into entries.
     async fn entries(&self, key: &[u8], entries: &mut IndexEntries) -> anyhow::Result<()>;
@@ -39,11 +46,7 @@ pub trait TSMIndex {
     async fn entry(&self, key: &[u8], timestamp: i64) -> anyhow::Result<Option<IndexEntry>>;
 
     /// key returns the key in the index at the given position, using entries to avoid allocations.
-    async fn key(
-        &self,
-        index: usize,
-        entries: &mut IndexEntries,
-    ) -> anyhow::Result<Option<Vec<u8>>>;
+    async fn key(&self, index: usize, entries: &mut IndexEntries) -> anyhow::Result<Vec<u8>>;
 
     /// key_at returns the key in the index at the given position.
     async fn key_at(&mut self, index: usize) -> anyhow::Result<Option<(Vec<u8>, u8)>>;
@@ -66,8 +69,8 @@ pub trait TSMIndex {
     /// time_range returns the min and max time across all keys in the file.
     fn time_range(&self) -> TimeRange;
 
-    /// tombstone_range returns ranges of time that are deleted for the given key.
-    async fn tombstone_range(&self, key: &[u8]) -> &[TimeRange];
+    // /// tombstone_range returns ranges of time that are deleted for the given key.
+    // async fn tombstone_range(&self, key: &[u8]) -> &[TimeRange];
 
     /// key_range returns the min and max keys in the file.
     fn key_range(&self) -> (&[u8], &[u8]);
@@ -105,7 +108,9 @@ pub(crate) struct IndirectIndex {
     /// tombstones contains only the tombstoned keys with subset of time values deleted.  An
     /// entry would exist here if a subset of the points for a key were deleted and the file
     /// had not be re-compacted to remove the points on disk.
-    tombstones: HashMap<String, Vec<TimeRange>>,
+    ///
+    /// Map<String, Vec<TimeRange>>
+    tombstones: RwLock<HashMap<Vec<u8>, Vec<TimeRange>>>,
 }
 
 impl IndirectIndex {
@@ -254,19 +259,206 @@ impl IndirectIndex {
 
 #[async_trait]
 impl TSMIndex for IndirectIndex {
-    async fn delete(&mut self, keys: &[&[u8]]) {
-        todo!()
+    async fn delete(&mut self, keys: &mut [&[u8]]) -> anyhow::Result<()> {
+        if keys.len() == 0 {
+            return Ok(());
+        }
+
+        keys.sort();
+
+        // Both keys and offsets are sorted.  Walk both in order and skip
+        // any keys that exist in both.
+        let mut offsets = self.offsets.write().await;
+        let start = {
+            let start = self
+                .binary_search(offsets.as_slice(), &keys[0])
+                .await
+                .map_err(|e| anyhow!(e))?;
+            isize::abs(start) as usize
+        };
+        let mut key_index = 0;
+
+        for i in start..offsets.len() {
+            if key_index >= keys.len() {
+                break;
+            }
+
+            let offset = offsets[i];
+            let del_key = keys[key_index];
+
+            let (_, key) = read_key(&self.accessor, offset)
+                .await
+                .map_err(|e| anyhow!(e))?;
+
+            while key_index < keys.len() && del_key.cmp(key.as_slice()).is_lt() {
+                key_index += 1;
+            }
+
+            if key_index < keys.len() && del_key.cmp(key.as_slice()).is_eq() {
+                key_index += 1;
+                offsets[i] = NIL_OFFSET;
+            }
+        }
+
+        // pack
+        let mut j = 0;
+        for i in 0..offsets.len() {
+            if offsets[i] == NIL_OFFSET {
+                continue;
+            } else {
+                offsets[j] = offsets[i];
+                j += 1;
+            }
+        }
+        offsets.truncate(j);
+
+        Ok(())
     }
 
-    async fn delete_range(&mut self, keys: &[&[u8]], min_time: i64, max_time: i64) {
-        todo!()
+    async fn delete_range(
+        &mut self,
+        keys: &mut [&[u8]],
+        min_time: i64,
+        max_time: i64,
+    ) -> anyhow::Result<()> {
+        if keys.len() == 0 {
+            return Ok(());
+        }
+
+        keys.sort();
+
+        // If we're deleting the max time range, just use tombstoning to remove the
+        // key from the offsets slice
+        if min_time == i64::MIN && max_time == i64::MAX {
+            self.delete(keys).await?;
+            return Ok(());
+        }
+
+        // Is the range passed in outside the time range for the file?
+        let time_range = self.time_range();
+        if min_time > time_range.max || max_time < time_range.min {
+            return Ok(());
+        }
+
+        let mut full_keys = Vec::with_capacity(keys.len());
+        let mut entries = IndexEntries::default();
+        let mut key_index = 0;
+        let key_count = self.key_count().await;
+
+        for i in 0..key_count {
+            if key_index >= keys.len() {
+                break;
+            }
+
+            let k = self.key(i, &mut entries).await?;
+            while key_index < keys.len() && keys[key_index].cmp(k.as_slice()).is_lt() {
+                key_index += 1;
+            }
+
+            // No more keys to delete, we're done.
+            if key_index >= keys.len() {
+                break;
+            }
+
+            // If the current key is greater than the index one, continue to the next
+            // index key.
+            let del_key = keys[key_index];
+            if del_key.cmp(k.as_slice()).is_gt() {
+                continue;
+            }
+
+            // If multiple tombstones are saved for the same key
+            if entries.entries.len() == 0 {
+                continue;
+            }
+
+            // Is the time range passed outside the time range we've stored for this key?
+            let time_range = entries.time_range();
+            if min_time > time_range.max || max_time < time_range.min {
+                continue;
+            }
+
+            // Does the range passed in cover every value for the key?
+            if min_time < time_range.min && max_time >= time_range.max {
+                full_keys.push(del_key);
+                key_index += 1;
+                continue;
+            }
+
+            // Append the new tombstones to the existing ones
+            {
+                let mut tombstones = self.tombstones.write().await;
+                let existing = tombstones.entry(del_key.to_vec()).or_insert(vec![]);
+                existing.push(TimeRange::new(min_time, max_time));
+
+                // Sort the updated tombstones if necessary
+                if existing.len() > 1 {
+                    existing.sort_by(|a, b| {
+                        if a.min == b.min && a.max <= b.max || a.min < b.min {
+                            Ordering::Less
+                        } else {
+                            Ordering::Greater
+                        }
+                    });
+                }
+            };
+
+            // We need to see if all the tombstones end up deleting the entire series.  This
+            // could happen if there is one tombstone with min,max time spanning all the block
+            // time ranges or from multiple smaller tombstones to delete segments.  To detect
+            // this cases, we use a window starting at the first tombstone and grow it be each
+            // tombstone that is immediately adjacent to the current window or if it overlaps.
+            // If there are any gaps, we abort.
+            // 检查所有的tombstones是否时连续的，如果连续的，计算出起始两个时间点，即min & max
+            {
+                let mut tombstones = self.tombstones.read().await;
+                let new_ts = tombstones.get(del_key).unwrap();
+
+                let mut min_ts = new_ts[0].min;
+                let mut max_ts = new_ts[0].max;
+
+                for j in 1..new_ts.len() {
+                    let prev_ts = &new_ts[j - 1];
+                    let ts = &new_ts[j];
+
+                    // Make sure all the tombstone line up for a continuous range.  We don't
+                    // want to have two small deletes on each edge's end up causing us to
+                    // remove the full key.
+                    if prev_ts.max != ts.min - 1 && !prev_ts.overlaps(ts) {
+                        min_ts = i64::MAX;
+                        max_ts = i64::MIN;
+                        break;
+                    }
+
+                    if ts.min < min_ts {
+                        min_ts = ts.min
+                    }
+                    if ts.max > max_ts {
+                        max_ts = ts.max
+                    }
+                }
+
+                // If we have a fully deleted series, delete it all of it.
+                if min_ts <= time_range.min && max_ts >= time_range.max {
+                    full_keys.push(del_key);
+                    key_index += 1;
+                    continue;
+                }
+            }
+        }
+
+        // Delete all the keys that fully deleted in bulk
+        if full_keys.len() > 0 {
+            self.delete(full_keys.as_mut_slice()).await?;
+        }
+
+        Ok(())
     }
 
     fn contains_key(&self, key: &[u8]) -> bool {
         key.cmp(self.min_key.as_slice()).is_ge() && key.cmp(self.max_key.as_slice()).is_le()
     }
 
-    // TODO optimization: 能多大key，就可以判断是否存在了
     async fn contains(&self, key: &[u8]) -> anyhow::Result<bool> {
         // let mut entries = IndexEntries::default();
         // self.entries(key, &mut entries).await?;
@@ -278,18 +470,29 @@ impl TSMIndex for IndirectIndex {
         Ok(offset_index.is_some())
     }
 
-    async fn contains_value(&self, key: &[u8], timestamp: i64) -> bool {
-        todo!()
+    async fn contains_value(&self, key: &[u8], timestamp: i64) -> anyhow::Result<bool> {
+        let entry = self.entry(key, timestamp).await?;
+        if entry.is_none() {
+            return Ok(false);
+        }
+
+        let tombstones = self.tombstones.read().await;
+        let tombstone = tombstones.get(key);
+        if let Some(tombstone) = tombstone {
+            for t in tombstone {
+                if t.min <= timestamp && t.max >= timestamp {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
     }
 
     async fn entries(&self, key: &[u8], entries: &mut IndexEntries) -> anyhow::Result<()> {
         let offsets = self.offsets.read().await;
         let offset_index = self.search_offset(offsets.as_slice(), key).await?;
         if let Some(index) = offset_index {
-            let k = self
-                .key(index, entries)
-                .await?
-                .ok_or(anyhow!("read index at {} error", index))?;
+            let k = self.key(index, entries).await?;
             if !k.as_slice().cmp(key).is_eq() {
                 return Err(anyhow!(
                     "key is inconsistency, expect: {:?}, found: {:?}",
@@ -315,14 +518,10 @@ impl TSMIndex for IndirectIndex {
         return Ok(None);
     }
 
-    async fn key(
-        &self,
-        index: usize,
-        entries: &mut IndexEntries,
-    ) -> anyhow::Result<Option<Vec<u8>>> {
+    async fn key(&self, index: usize, entries: &mut IndexEntries) -> anyhow::Result<Vec<u8>> {
         let offsets = self.offsets.read().await;
         if index >= offsets.len() {
-            return Ok(None);
+            return Err(anyhow!("offset's index out of bounds"));
         }
 
         let mut offset = offsets[index];
@@ -339,7 +538,7 @@ impl TSMIndex for IndirectIndex {
         )
         .await?;
 
-        Ok(Some(key))
+        Ok(key)
     }
 
     async fn key_at(&mut self, index: usize) -> anyhow::Result<Option<(Vec<u8>, u8)>> {
@@ -393,10 +592,6 @@ impl TSMIndex for IndirectIndex {
         TimeRange::new(self.min_time, self.max_time)
     }
 
-    async fn tombstone_range(&self, key: &[u8]) -> &[TimeRange] {
-        todo!()
-    }
-
     fn key_range(&self) -> (&[u8], &[u8]) {
         (self.min_key.as_slice(), self.max_key.as_slice())
     }
@@ -420,7 +615,7 @@ impl TSMIndex for IndirectIndex {
     }
 
     async fn close(&mut self) -> anyhow::Result<()> {
-        todo!()
+        Ok(())
     }
 }
 

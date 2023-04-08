@@ -4,6 +4,7 @@ use bytes::BufMut;
 use influxdb_utils::time::unix_nano_to_time;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 
+use crate::engine::tsm1::file_store::reader::tsm_reader::TimeRange;
 use crate::engine::tsm1::file_store::INDEX_ENTRY_SIZE;
 
 /// IndexEntry is the index information for a given block in a TSM file.
@@ -113,6 +114,33 @@ impl IndexEntries {
 
     pub fn push(&mut self, entry: IndexEntry) {
         self.entries.push(entry);
+    }
+
+    pub fn time_range(&self) -> TimeRange {
+        if self.entries.len() > 0 {
+            TimeRange::new(
+                self.entries[0].min_time,
+                self.entries[self.entries.len() - 1].max_time,
+            )
+        } else {
+            TimeRange::new(i64::MIN, i64::MIN)
+        }
+    }
+
+    pub fn min_time(&self) -> i64 {
+        if self.entries.len() > 0 {
+            self.entries[0].min_time
+        } else {
+            i64::MIN
+        }
+    }
+
+    pub fn max_time(&self) -> i64 {
+        if self.entries.len() > 0 {
+            self.entries[self.entries.len() - 1].max_time
+        } else {
+            i64::MAX
+        }
     }
 
     pub fn marshal_binary(&self) -> anyhow::Result<Vec<u8>> {
