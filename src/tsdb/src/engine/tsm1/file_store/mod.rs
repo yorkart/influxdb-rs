@@ -1,6 +1,7 @@
 pub mod index;
 pub mod reader;
 pub mod stat;
+pub mod tombstone;
 pub mod writer;
 
 /// MAGIC_NUMBER is written as the first 4 bytes of a data file to

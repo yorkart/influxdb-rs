@@ -54,14 +54,6 @@ impl FileStat {
     }
 }
 
-/// TombstoneStat holds information about a possible tombstone file on disk.
-pub struct TombstoneStat {
-    tombstone_exists: bool,
-    path: String,
-    last_modified: i64,
-    size: u32,
-}
-
 /// FileStoreStatistics keeps statistics about the file store.
 pub struct FileStoreStatistics {
     disk_bytes: i64,

@@ -3,7 +3,11 @@ use crate::engine::tsm1::encoding::{
 };
 use crate::engine::tsm1::file_store::index::IndexEntry;
 use crate::engine::tsm1::file_store::reader::batch_deleter::BatchDeleter;
-use crate::engine::tsm1::file_store::stat::{FileStat, TombstoneStat};
+use crate::engine::tsm1::file_store::reader::index_reader::TSMIndex;
+use crate::engine::tsm1::file_store::stat::FileStat;
+use crate::engine::tsm1::file_store::tombstone::TombstoneStat;
+use influxdb_storage::RandomAccess;
+use tokio::sync::{RwLock, Semaphore};
 
 /// TimeRange holds a min and max timestamp.
 #[derive(Clone)]
@@ -15,6 +19,10 @@ pub struct TimeRange {
 impl TimeRange {
     pub fn new(min: i64, max: i64) -> Self {
         Self { min, max }
+    }
+
+    pub fn unbound() -> Self {
+        Self::new(i64::MIN, i64::MAX)
     }
 
     pub fn overlaps(&self, other: &TimeRange) -> bool {
@@ -72,7 +80,11 @@ pub trait TSMReader {
     ) -> anyhow::Result<()>;
 
     /// Entries returns the index entries for all blocks for the given key.
-    async fn read_entries(&mut self, key: &[u8], entries: &mut Vec<IndexEntry>);
+    async fn read_entries(
+        &mut self,
+        key: &[u8],
+        entries: &mut Vec<IndexEntry>,
+    ) -> anyhow::Result<()>;
 
     /// Returns true if the TSMFile may contain a value with the specified
     /// key and time.
@@ -155,4 +167,22 @@ pub trait TSMReader {
 
     /// free releases any resources held by the FileStore to free up system resources.
     async fn free(&mut self) -> anyhow::Result<()>;
+}
+
+pub(crate) struct DefaultTSMReader<I>
+where
+    I: TSMIndex,
+{
+    // refs is the count of active references to this reader.
+    refs: u64,
+    refsWG: Semaphore,
+
+    madviseWillNeed: bool, // Hint to the kernel with MADV_WILLNEED.
+    mu: RwLock<bool>,
+
+    // accessor provides access and decoding of blocks for the reader.
+    accessor: Box<dyn RandomAccess>,
+
+    // index is the index of all blocks.
+    index: I,
 }

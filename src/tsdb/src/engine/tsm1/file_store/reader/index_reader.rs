@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::io;
 
-use influxdb_storage::{RandomAccessFile, RandomAccessFileExt};
+use influxdb_storage::{RandomAccess, RandomAccessExt};
 use tokio::sync::RwLock;
 
 use crate::engine::tsm1::file_store::index::{IndexEntries, IndexEntry};
@@ -87,7 +87,7 @@ pub trait TSMIndex {
 /// IndirectIndex is a TSMIndex that uses a raw byte slice representation of an index.  This
 /// implementation can be used for indexes that may be MMAPed into memory.
 pub(crate) struct IndirectIndex {
-    accessor: Box<dyn RandomAccessFile>,
+    accessor: Box<dyn RandomAccess>,
     index_offset: u64,
     index_len: u32,
 
@@ -115,7 +115,7 @@ pub(crate) struct IndirectIndex {
 
 impl IndirectIndex {
     pub async fn new(
-        accessor: Box<dyn RandomAccessFile>,
+        accessor: Box<dyn RandomAccess>,
         index_offset: u64,
         index_len: u32,
     ) -> anyhow::Result<Self> {
@@ -620,7 +620,7 @@ impl TSMIndex for IndirectIndex {
 }
 
 async fn read_key(
-    accessor: &Box<dyn RandomAccessFile>,
+    accessor: &Box<dyn RandomAccess>,
     index_offset: u64,
 ) -> io::Result<(u16, Vec<u8>)> {
     let key_len = accessor.read_u16(index_offset).await?;
@@ -632,7 +632,7 @@ async fn read_key(
 }
 
 async fn read_entries(
-    accessor: &Box<dyn RandomAccessFile>,
+    accessor: &Box<dyn RandomAccess>,
     mut offset: u64,
     max_offset: u64,
     entries: &mut IndexEntries,
@@ -667,3 +667,29 @@ async fn read_entries(
 
     Ok(offset)
 }
+
+// #[cfg(test)]
+// mod tests {
+//     use crate::engine::tsm1::block::BLOCK_FLOAT64;
+//     use crate::engine::tsm1::file_store::index::IndexEntry;
+//     use crate::engine::tsm1::file_store::writer::index_writer::{DirectIndex, IndexWriter};
+//
+//     fn must_make_index(keys: usize, blocks: usize) {
+//         let mut index = DirectIndex::with_mem_buffer(1024 * 1024);
+//         for i in 0..keys {
+//             for j in 0..blocks {
+//                 let s = format!("cpu-{%03d}", i);
+//                 index.add(
+//                     s.as_bytes(),
+//                     BLOCK_FLOAT64,
+//                     IndexEntry {
+//                         min_time: (i * j * 2) as i64,
+//                         max_time: (i * j * 2 + 1) as i64,
+//                         offset: 10,
+//                         size: 100,
+//                     },
+//                 );
+//             }
+//         }
+//     }
+// }

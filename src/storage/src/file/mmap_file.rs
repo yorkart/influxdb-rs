@@ -5,7 +5,7 @@ use std::{io, ptr};
 use memmap2::{Mmap, MmapOptions};
 use tokio::fs::File;
 
-use crate::RandomAccessFile;
+use crate::RandomAccess;
 
 pub struct MmapReadableFile {
     f: File,
@@ -27,7 +27,7 @@ impl MmapReadableFile {
 }
 
 #[async_trait]
-impl RandomAccessFile for MmapReadableFile {
+impl RandomAccess for MmapReadableFile {
     async fn read(&self, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
         let size = buf.len();
         if size == 0 {
@@ -60,8 +60,8 @@ mod tests {
     use tokio::io;
     use tokio::io::AsyncWriteExt;
 
-    use crate::mmap::MmapReadableFile;
-    use crate::RandomAccessFile;
+    use crate::file::mmap_file::MmapReadableFile;
+    use crate::RandomAccess;
 
     #[tokio::test]
     async fn test_mmap_readable_file() -> io::Result<()> {

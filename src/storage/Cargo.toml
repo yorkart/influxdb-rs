@@ -9,6 +9,7 @@ name = "influxdb_storage"
 [dependencies]
 async-trait = "0.1"
 tokio = {version = "1",  features = ["full"]}
+futures = { version = "0.3", features = ["alloc"] }
 
 thiserror = "1.0"
 filepath = "0.1"
@@ -16,6 +17,8 @@ filepath = "0.1"
 # mmap
 #fmmap = { version = "0.3", features = ["tokio-async"] }
 memmap2 = "0.5"
+
+opendal = "0.30"
 
 [dev-dependencies]
 tempfile = "3.5"
