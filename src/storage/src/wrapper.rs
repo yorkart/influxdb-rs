@@ -1,8 +1,8 @@
-use bytes::Bytes;
 use std::io::Error;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
+use bytes::Bytes;
 use futures::AsyncWrite;
 
 pub struct TokioWriter {
