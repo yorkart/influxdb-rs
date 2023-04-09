@@ -7,6 +7,7 @@ use async_compression::tokio::write::GzipEncoder;
 use influxdb_storage::opendal::{Operator, Reader};
 use influxdb_storage::Writer;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
+use tokio::sync::mpsc::Sender;
 use tokio::sync::RwLock;
 
 use crate::engine::tsm1::file_store::reader::tsm_reader::TimeRange;
@@ -220,69 +221,16 @@ impl Tombstoner {
     }
 
     /// Walk calls fn for every Tombstone under the Tombstoner.
-    /// TODO 使用iterator方式实现
-    pub async fn walk<F>(&self, cb: F) -> anyhow::Result<()>
-    where
-        F: Fn(Tombstone) -> anyhow::Result<()>,
-    {
-        let _tx = self.tx.write().await;
-
-        let tombstone_path = self.tombstone_path.to_str().unwrap();
-
-        if !self.op.is_exist(tombstone_path).await? {
-            return Ok(());
+    pub async fn walk(&self, sender: Sender<anyhow::Result<Tombstone>>) -> anyhow::Result<()> {
+        let mut tx = self.tx.write().await;
+        if tx.is_none() {
+            let new_tx =
+                TombstoneTransaction::begin(self.op.clone(), self.tombstone_path.clone()).await?;
+            tx.replace(new_tx);
         }
+        let tx = tx.as_mut().unwrap();
 
-        let mut reader = self.op.reader(tombstone_path).await?;
-        reader.seek(SeekFrom::Start(0)).await?;
-
-        let header = reader.read_u32().await?;
-        if header != V4HEADER {
-            return Err(anyhow!("unsupported Tombstone version: {}", header));
-        }
-
-        Ok(())
-    }
-
-    async fn read_tombstone_v4<F>(&self, reader: &mut Reader, cb: F) -> anyhow::Result<()>
-    where
-        F: Fn(Tombstone) -> anyhow::Result<()>,
-    {
-        let seek_from = if self.last_applied_offset > 0 {
-            SeekFrom::Start(self.last_applied_offset)
-        } else {
-            SeekFrom::Start(HEADER_SIZE as u64)
-        };
-        reader.seek(seek_from).await.map_err(|e| anyhow!(e))?;
-
-        let mut b = Vec::with_capacity(4096);
-
-        let mut gr = GzipDecoder::new(tokio::io::BufReader::new(reader));
-        loop {
-            gr.multiple_members(false);
-
-            loop {
-                let key_len = gr.read_u32().await?;
-
-                b.clear();
-                if b.capacity() < key_len as usize {
-                    b.reserve_exact(key_len as usize);
-                }
-                b.resize(key_len as usize, 0);
-
-                gr.read_exact(b.as_mut_slice()).await?;
-
-                let min = gr.read_u64().await? as i64;
-                let max = gr.read_u64().await? as i64;
-
-                cb(Tombstone {
-                    key: b.to_vec(),
-                    time_range: TimeRange { min, max },
-                })?;
-            }
-        }
-
-        Ok(())
+        tx.walk(sender).await
     }
 }
 
@@ -292,6 +240,8 @@ struct TombstoneTransaction {
     tmp_path: String,
 
     tmp_gz: GzipEncoder<Writer>,
+
+    last_applied_offset: u64,
 }
 
 impl TombstoneTransaction {
@@ -314,6 +264,7 @@ impl TombstoneTransaction {
             tombstone_path: tombstone_path.to_string(),
             tmp_path: tmp_path.to_string(),
             tmp_gz,
+            last_applied_offset: 0,
         })
     }
 
@@ -354,6 +305,87 @@ impl TombstoneTransaction {
         }
 
         Ok(tmp_writer)
+    }
+
+    /// Walk calls fn for every Tombstone under the Tombstoner.
+    /// TODO 使用iterator方式实现
+    pub async fn walk(&mut self, sender: Sender<anyhow::Result<Tombstone>>) -> anyhow::Result<()> {
+        let tombstone_path = self.tombstone_path.as_str();
+
+        if !self.op.is_exist(tombstone_path).await? {
+            return Ok(());
+        }
+
+        let mut reader = self.op.reader(tombstone_path).await?;
+        reader.seek(SeekFrom::Start(0)).await?;
+
+        let header = reader.read_u32().await?;
+        if header != V4HEADER {
+            return Err(anyhow!("unsupported Tombstone version: {}", header));
+        }
+
+        self.read_tombstone_v4(&mut reader, sender).await
+    }
+
+    async fn read_tombstone_v4(
+        &mut self,
+        reader: &mut Reader,
+        sender: Sender<anyhow::Result<Tombstone>>,
+    ) -> anyhow::Result<()> {
+        let stat = self.op.stat(self.tombstone_path.as_str()).await?;
+        let file_size = stat.content_length();
+
+        let mut offset = if self.last_applied_offset > 0 {
+            self.last_applied_offset
+        } else {
+            HEADER_SIZE as u64
+        };
+        if offset >= file_size {
+            return Ok(());
+        }
+
+        let seek_from = SeekFrom::Start(offset);
+        reader.seek(seek_from).await.map_err(|e| anyhow!(e))?;
+
+        let mut b = vec![];
+
+        let mut gr = GzipDecoder::new(tokio::io::BufReader::new(reader));
+        gr.multiple_members(false);
+
+        while offset < file_size {
+            let key_len = gr.read_u32().await? as usize;
+            offset += 2;
+
+            if b.capacity() < key_len as usize {
+                b.reserve_exact(key_len as usize);
+            }
+            b.truncate(key_len as usize);
+
+            let n = gr.read_exact(b.as_mut_slice()).await?;
+            if n != key_len {
+                return Err(anyhow!(
+                    "not enough key were read, expect {}, found {}",
+                    key_len,
+                    n
+                ));
+            }
+            offset += n as u64;
+
+            let min = gr.read_u64().await? as i64;
+            offset += 8;
+
+            let max = gr.read_u64().await? as i64;
+            offset += 8;
+
+            let t = Tombstone {
+                key: b.to_vec(),
+                time_range: TimeRange { min, max },
+            };
+            sender.send(Ok(t)).await.map_err(|e| anyhow!("{}", e))?;
+        }
+
+        self.last_applied_offset = offset;
+        Ok(())
     }
 
     pub async fn write_tombstone(&mut self, ts: Tombstone) -> anyhow::Result<()> {
