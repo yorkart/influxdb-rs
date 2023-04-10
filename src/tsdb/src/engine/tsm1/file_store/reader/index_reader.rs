@@ -2,6 +2,7 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::io;
 use std::io::{ErrorKind, SeekFrom};
+use std::sync::Arc;
 
 use influxdb_storage::opendal::Reader;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
@@ -95,7 +96,7 @@ pub(crate) struct IndirectIndex {
 
     /// offsets contains the positions in b for each key.  It points to the 2 byte length of
     /// key.
-    offsets: RwLock<Vec<u64>>,
+    offsets: Arc<RwLock<Vec<u64>>>,
 
     /// min_key, max_key are the minimum and maximum (lexicographically sorted) contained in the
     /// file
@@ -201,7 +202,7 @@ impl IndirectIndex {
             accessor,
             index_offset,
             index_len,
-            offsets: RwLock::new(offsets),
+            offsets: Arc::new(RwLock::new(offsets)),
             min_key,
             max_key,
             min_time,
@@ -287,7 +288,8 @@ impl TSMIndex for IndirectIndex {
 
         // Both keys and offsets are sorted.  Walk both in order and skip
         // any keys that exist in both.
-        let mut offsets = self.offsets.write().await;
+        let offsets = self.offsets.clone();
+        let mut offsets = offsets.write().await;
         let start = {
             let start = self
                 .binary_search(offsets.as_slice(), &keys[0])
@@ -484,7 +486,8 @@ impl TSMIndex for IndirectIndex {
         // Ok(entries.entries.len() > 0)
 
         // optimization
-        let offsets = self.offsets.read().await;
+        let offsets = self.offsets.clone();
+        let offsets = offsets.read().await;
         let offset_index = self.search_offset(offsets.as_slice(), key).await?;
         Ok(offset_index.is_some())
     }
@@ -508,7 +511,8 @@ impl TSMIndex for IndirectIndex {
     }
 
     async fn entries(&mut self, key: &[u8], entries: &mut IndexEntries) -> anyhow::Result<()> {
-        let offsets = self.offsets.read().await;
+        let offsets = self.offsets.clone();
+        let offsets = offsets.read().await;
         let offset_index = self.search_offset(offsets.as_slice(), key).await?;
         if let Some(index) = offset_index {
             let k = self.key(index, entries).await?;
@@ -584,7 +588,8 @@ impl TSMIndex for IndirectIndex {
     }
 
     async fn seek(&mut self, key: &[u8]) -> anyhow::Result<u64> {
-        let offsets = self.offsets.read().await;
+        let offsets = self.offsets.clone();
+        let offsets = offsets.read().await;
         let offset_index = self
             .search_offset(offsets.as_slice(), key)
             .await?
@@ -613,7 +618,8 @@ impl TSMIndex for IndirectIndex {
     }
 
     async fn block_type(&mut self, key: &[u8]) -> anyhow::Result<u8> {
-        let offsets = self.offsets.read().await;
+        let offsets = self.offsets.clone();
+        let offsets = offsets.read().await;
         let offset_index = self
             .search_offset(offsets.as_slice(), key)
             .await?

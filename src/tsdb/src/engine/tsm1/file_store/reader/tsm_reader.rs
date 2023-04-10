@@ -1,13 +1,21 @@
+use crate::engine::tsm1::block::decoder::decode_block;
+use influxdb_storage::opendal::{Operator, Reader};
+use influxdb_storage::RandomAccess;
+use std::io::SeekFrom;
+use std::sync::atomic::{AtomicU64, Ordering};
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use tokio::sync::RwLock;
+
 use crate::engine::tsm1::encoding::{
     BooleanValues, FloatValues, IntegerValues, StringValues, UnsignedValues, Values,
 };
 use crate::engine::tsm1::file_store::index::IndexEntry;
 use crate::engine::tsm1::file_store::reader::batch_deleter::BatchDeleter;
+use crate::engine::tsm1::file_store::reader::index_reader::IndirectIndex;
 use crate::engine::tsm1::file_store::reader::index_reader::TSMIndex;
 use crate::engine::tsm1::file_store::stat::FileStat;
-use crate::engine::tsm1::file_store::tombstone::TombstoneStat;
-use influxdb_storage::RandomAccess;
-use tokio::sync::{RwLock, Semaphore};
+use crate::engine::tsm1::file_store::tombstone::{TombstoneStat, Tombstoner};
+use crate::engine::tsm1::file_store::{MAGIC_NUMBER, VERSION};
 
 /// TimeRange holds a min and max timestamp.
 #[derive(Clone)]
@@ -41,7 +49,7 @@ pub struct KeyRange<'a, 'b> {
 pub trait TSMReader {
     /// path returns the underlying file path for the TSMFile.  If the file
     /// has not be written or loaded from disk, the zero value is returned.
-    fn path(&self) -> &str;
+    async fn path(&self) -> &str;
 
     /// read returns all the values in the block where time t resides.
     async fn read(&mut self, key: &[u8], t: i64) -> anyhow::Result<()>;
@@ -173,16 +181,249 @@ pub(crate) struct DefaultTSMReader<I>
 where
     I: TSMIndex,
 {
-    // refs is the count of active references to this reader.
-    refs: u64,
-    refsWG: Semaphore,
+    /// refs is the count of active references to this reader.
+    refs: AtomicU64,
 
-    madviseWillNeed: bool, // Hint to the kernel with MADV_WILLNEED.
     mu: RwLock<bool>,
 
-    // accessor provides access and decoding of blocks for the reader.
+    /// accessor provides access and decoding of blocks for the reader.
     accessor: Box<dyn RandomAccess>,
 
-    // index is the index of all blocks.
-    index: I,
+    /// index is the index of all blocks.
+    index: RwLock<I>,
+
+    /// tombstoner ensures tombstoned keys are not available by the index.
+    tombstoner: Tombstoner,
+
+    /// size is the size of the file on disk.
+    size: i64,
+
+    /// last_modified is the last time this file was modified on disk
+    last_modified: i64,
+
+    /// Counter incremented everytime the mmapAccessor is accessed
+    access_count: u64,
+    /// Counter to determine whether the accessor can free its resources
+    free_count: u64,
+}
+
+impl<I> DefaultTSMReader<I>
+where
+    I: TSMIndex,
+{
+    // pub fn new(op: Operator, path: impl AsRef<Path>) -> Self {
+    //     Self {
+    //         refs: AtomicU64::new(0),
+    //         mu: (),
+    //         accessor: (),
+    //         index: (),
+    //         tombstoner: (),
+    //         size: (),
+    //         last_modified: (),
+    //         access_count: (),
+    //         free_count: (),
+    //     }
+    // }
+}
+
+/// BlockAccessor abstracts a method of accessing blocks from a
+/// TSM file.
+#[async_trait]
+trait BlockAccessor<T: TSMIndex> {
+    async fn read(&mut self, key: &[u8], timestamp: i64) -> anyhow::Result<Values>;
+    async fn read_all(&mut self, key: &[u8]) -> anyhow::Result<Values>;
+    async fn read_block(&mut self, entry: IndexEntry, values: &mut Values) -> anyhow::Result<()>;
+    async fn read_float_block(
+        &mut self,
+        entry: IndexEntry,
+        values: &mut FloatValues,
+    ) -> anyhow::Result<()>;
+    async fn read_integer_block(
+        &mut self,
+        entry: IndexEntry,
+        values: &mut IntegerValues,
+    ) -> anyhow::Result<()>;
+    async fn read_unsigned_block(
+        &mut self,
+        entry: IndexEntry,
+        values: &mut UnsignedValues,
+    ) -> anyhow::Result<()>;
+    async fn read_string_block(
+        &mut self,
+        entry: IndexEntry,
+        values: &mut StringValues,
+    ) -> anyhow::Result<()>;
+    async fn read_boolean_block(
+        &mut self,
+        entry: IndexEntry,
+        values: &mut BooleanValues,
+    ) -> anyhow::Result<()>;
+    async fn read_bytes(&mut self, entry: IndexEntry, buf: &[u8]) -> anyhow::Result<(u32, &[u8])>;
+    async fn rename(&mut self, path: &str) -> anyhow::Result<()>;
+    fn path(&self) -> String;
+    async fn close(&mut self) -> anyhow::Result<()>;
+    async fn free(&mut self) -> anyhow::Result<()>;
+}
+
+struct DefaultBlockAccessor {
+    /// Counter incremented everytime the mmapAccessor is accessed
+    access_count: AtomicU64,
+    /// Counter to determine whether the accessor can free its resources
+    free_count: AtomicU64,
+
+    tsm_path: String,
+    op: Operator,
+
+    index: IndirectIndex,
+}
+
+impl DefaultBlockAccessor {
+    pub async fn new(tsm_path: String, op: Operator) -> anyhow::Result<Self> {
+        let mut reader = op.reader(tsm_path.as_str()).await?;
+
+        Self::verify_version(&mut reader).await?;
+
+        reader.seek(SeekFrom::Start(0)).await?;
+
+        let stat = op.stat(tsm_path.as_str()).await?;
+        let file_size = stat.content_length();
+        if file_size < 8 {
+            return Err(anyhow!(
+                "BlockAccessor: byte slice too small for IndirectIndex"
+            ));
+        }
+
+        let index_ofs_pos = file_size - 8;
+        reader.seek(SeekFrom::Start(index_ofs_pos)).await?;
+        let index_start = reader.read_u64().await?;
+
+        let index = IndirectIndex::new(
+            op.reader(tsm_path.as_str()).await?,
+            index_start,
+            (index_ofs_pos - index_start) as u32,
+        )
+        .await?;
+
+        let access_count = AtomicU64::new(1);
+        let free_count = AtomicU64::new(1);
+
+        Ok(Self {
+            access_count,
+            free_count,
+            tsm_path,
+            op,
+            index,
+        })
+    }
+
+    async fn verify_version(reader: &mut Reader) -> anyhow::Result<()> {
+        reader
+            .seek(SeekFrom::Start(0))
+            .await
+            .map_err(|e| anyhow!("init: error reading magic number of file: {}", e))?;
+
+        let magic_number = reader
+            .read_u32()
+            .await
+            .map_err(|e| anyhow!("init: error reading magic number of file: {}", e))?;
+        if magic_number != MAGIC_NUMBER {
+            return Err(anyhow!("can only read from tsm file"));
+        }
+
+        let version = reader
+            .read_u8()
+            .await
+            .map_err(|e| anyhow!("init: error reading version: {}", e))?;
+        if version != VERSION {
+            return Err(anyhow!(
+                "init: file is version {}. expected {}",
+                version,
+                VERSION
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn inc_access(&self) {
+        self.access_count.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+#[async_trait]
+impl BlockAccessor<IndirectIndex> for DefaultBlockAccessor {
+    async fn read(&mut self, key: &[u8], timestamp: i64) -> anyhow::Result<Values> {
+        todo!()
+    }
+
+    async fn read_all(&mut self, key: &[u8]) -> anyhow::Result<Values> {
+        todo!()
+    }
+
+    async fn read_block(&mut self, entry: IndexEntry, values: &mut Values) -> anyhow::Result<()> {
+        self.inc_access();
+
+        // decode_block()
+        Ok(())
+    }
+
+    async fn read_float_block(
+        &mut self,
+        entry: IndexEntry,
+        values: &mut FloatValues,
+    ) -> anyhow::Result<()> {
+        todo!()
+    }
+
+    async fn read_integer_block(
+        &mut self,
+        entry: IndexEntry,
+        values: &mut IntegerValues,
+    ) -> anyhow::Result<()> {
+        todo!()
+    }
+
+    async fn read_unsigned_block(
+        &mut self,
+        entry: IndexEntry,
+        values: &mut UnsignedValues,
+    ) -> anyhow::Result<()> {
+        todo!()
+    }
+
+    async fn read_string_block(
+        &mut self,
+        entry: IndexEntry,
+        values: &mut StringValues,
+    ) -> anyhow::Result<()> {
+        todo!()
+    }
+
+    async fn read_boolean_block(
+        &mut self,
+        entry: IndexEntry,
+        values: &mut BooleanValues,
+    ) -> anyhow::Result<()> {
+        todo!()
+    }
+
+    async fn read_bytes(&mut self, entry: IndexEntry, buf: &[u8]) -> anyhow::Result<(u32, &[u8])> {
+        todo!()
+    }
+
+    async fn rename(&mut self, path: &str) -> anyhow::Result<()> {
+        todo!()
+    }
+
+    fn path(&self) -> String {
+        todo!()
+    }
+
+    async fn close(&mut self) -> anyhow::Result<()> {
+        todo!()
+    }
+
+    async fn free(&mut self) -> anyhow::Result<()> {
+        todo!()
+    }
 }
