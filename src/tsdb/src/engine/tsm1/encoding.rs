@@ -243,17 +243,17 @@ where
 pub type FloatValues = Vec<Value<f64>>;
 pub type IntegerValues = Vec<Value<i64>>;
 pub type BooleanValues = Vec<Value<bool>>;
-pub type StringValues = Vec<Value<u8>>;
+pub type StringValues = Vec<Value<Vec<u8>>>;
 pub type UnsignedValues = Vec<Value<u64>>;
 
 /// Values describes the various types of block data that can be held within a TSM file.
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum Values {
-    Float(Vec<Value<f64>>),
-    Integer(Vec<Value<i64>>),
-    Bool(Vec<Value<bool>>),
-    Str(Vec<Value<Vec<u8>>>),
-    Unsigned(Vec<Value<u64>>),
+    Float(FloatValues),
+    Integer(IntegerValues),
+    Bool(BooleanValues),
+    String(StringValues),
+    Unsigned(UnsignedValues),
 }
 
 impl Values {
@@ -262,7 +262,7 @@ impl Values {
             Self::Float(values) => values.len(),
             Self::Integer(values) => values.len(),
             Self::Bool(values) => values.len(),
-            Self::Str(values) => values.len(),
+            Self::String(values) => values.len(),
             Self::Unsigned(values) => values.len(),
         }
     }
@@ -274,7 +274,7 @@ impl TValues for Values {
             Self::Float(values) => values.min_time(),
             Self::Integer(values) => values.min_time(),
             Self::Bool(values) => values.min_time(),
-            Self::Str(values) => values.min_time(),
+            Self::String(values) => values.min_time(),
             Self::Unsigned(values) => values.min_time(),
         }
     }
@@ -284,7 +284,7 @@ impl TValues for Values {
             Self::Float(values) => values.max_time(),
             Self::Integer(values) => values.max_time(),
             Self::Bool(values) => values.max_time(),
-            Self::Str(values) => values.max_time(),
+            Self::String(values) => values.max_time(),
             Self::Unsigned(values) => values.max_time(),
         }
     }
@@ -294,7 +294,7 @@ impl TValues for Values {
             Self::Float(values) => values.size(),
             Self::Integer(values) => values.size(),
             Self::Bool(values) => values.size(),
-            Self::Str(values) => values.size(),
+            Self::String(values) => values.size(),
             Self::Unsigned(values) => values.size(),
         }
     }
@@ -304,7 +304,7 @@ impl TValues for Values {
             Self::Float(values) => values.ordered(),
             Self::Integer(values) => values.ordered(),
             Self::Bool(values) => values.ordered(),
-            Self::Str(values) => values.ordered(),
+            Self::String(values) => values.ordered(),
             Self::Unsigned(values) => values.ordered(),
         }
     }
@@ -314,7 +314,7 @@ impl TValues for Values {
             Self::Float(values) => Self::Float(values.deduplicate()),
             Self::Integer(values) => Self::Integer(values.deduplicate()),
             Self::Bool(values) => Self::Bool(values.deduplicate()),
-            Self::Str(values) => Self::Str(values.deduplicate()),
+            Self::String(values) => Self::String(values.deduplicate()),
             Self::Unsigned(values) => Self::Unsigned(values.deduplicate()),
         }
     }
@@ -324,7 +324,7 @@ impl TValues for Values {
             Self::Float(values) => Self::Float(values.exclude(min, max)),
             Self::Integer(values) => Self::Integer(values.exclude(min, max)),
             Self::Bool(values) => Self::Bool(values.exclude(min, max)),
-            Self::Str(values) => Self::Str(values.exclude(min, max)),
+            Self::String(values) => Self::String(values.exclude(min, max)),
             Self::Unsigned(values) => Self::Unsigned(values.exclude(min, max)),
         }
     }
@@ -334,7 +334,7 @@ impl TValues for Values {
             Self::Float(values) => Self::Float(values.include(min, max)),
             Self::Integer(values) => Self::Integer(values.include(min, max)),
             Self::Bool(values) => Self::Bool(values.include(min, max)),
-            Self::Str(values) => Self::Str(values.include(min, max)),
+            Self::String(values) => Self::String(values.include(min, max)),
             Self::Unsigned(values) => Self::Unsigned(values.include(min, max)),
         }
     }
@@ -344,7 +344,7 @@ impl TValues for Values {
             Self::Float(values) => values.find_range(min, max),
             Self::Integer(values) => values.find_range(min, max),
             Self::Bool(values) => values.find_range(min, max),
-            Self::Str(values) => values.find_range(min, max),
+            Self::String(values) => values.find_range(min, max),
             Self::Unsigned(values) => values.find_range(min, max),
         }
     }
@@ -372,9 +372,9 @@ impl TValues for Values {
                     panic!("expect Float values")
                 }
             }
-            Self::Str(values) => {
-                if let Self::Str(values_b) = b {
-                    Self::Str(values.merge(values_b))
+            Self::String(values) => {
+                if let Self::String(values_b) = b {
+                    Self::String(values.merge(values_b))
                 } else {
                     panic!("expect Float values")
                 }

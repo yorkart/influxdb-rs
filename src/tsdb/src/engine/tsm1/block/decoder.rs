@@ -12,9 +12,12 @@ use crate::engine::tsm1::codec::timestamp::TimeDecoder;
 use crate::engine::tsm1::codec::unsigned::UnsignedDecoder;
 use crate::engine::tsm1::codec::varint::VarInt;
 use crate::engine::tsm1::codec::{timestamp, Decoder};
-use crate::engine::tsm1::encoding::{Capacity, Value, Values};
+use crate::engine::tsm1::encoding::{
+    BooleanValues, Capacity, FloatValues, IntegerValues, StringValues, UnsignedValues, Value,
+    Values,
+};
 
-pub fn decode_block(block: &[u8]) -> anyhow::Result<Values> {
+pub fn decode_block(block: &[u8], values: &mut Values) -> anyhow::Result<()> {
     if block.len() <= ENCODED_BLOCK_HEADER_SIZE {
         return Err(anyhow!(
             "decode of short block: got {}, exp {}",
@@ -27,59 +30,186 @@ pub fn decode_block(block: &[u8]) -> anyhow::Result<Values> {
     let sz = timestamp::count_timestamps(tb)?;
 
     match typ {
-        BLOCK_FLOAT64 => decode_float_block(tb, vb, sz),
-        BLOCK_INTEGER => decode_integer_block(tb, vb, sz),
-        BLOCK_BOOLEAN => decode_bool_block(tb, vb, sz),
-        BLOCK_STRING => decode_str_block(tb, vb, sz),
-        BLOCK_UNSIGNED => decode_unsigned_block(tb, vb, sz),
+        BLOCK_FLOAT64 => {
+            if let Values::Float(values) = values {
+                decode_float_block_values(tb, vb, sz, values)
+            } else {
+                Err(anyhow!(
+                    "invalid block type: exp {}, got {}",
+                    BLOCK_FLOAT64,
+                    typ
+                ))
+            }
+        }
+        BLOCK_INTEGER => {
+            if let Values::Integer(values) = values {
+                decode_integer_block_values(tb, vb, sz, values)
+            } else {
+                Err(anyhow!(
+                    "invalid block type: exp {}, got {}",
+                    BLOCK_INTEGER,
+                    typ
+                ))
+            }
+        }
+        BLOCK_BOOLEAN => {
+            if let Values::Bool(values) = values {
+                decode_bool_block_values(tb, vb, sz, values)
+            } else {
+                Err(anyhow!(
+                    "invalid block type: exp {}, got {}",
+                    BLOCK_BOOLEAN,
+                    typ
+                ))
+            }
+        }
+        BLOCK_STRING => {
+            if let Values::String(values) = values {
+                decode_string_block_values(tb, vb, sz, values)
+            } else {
+                Err(anyhow!(
+                    "invalid block type: exp {}, got {}",
+                    BLOCK_STRING,
+                    typ
+                ))
+            }
+        }
+        BLOCK_UNSIGNED => {
+            if let Values::Unsigned(values) = values {
+                decode_unsigned_block_values(tb, vb, sz, values)
+            } else {
+                Err(anyhow!(
+                    "invalid block type: exp {}, got {}",
+                    BLOCK_UNSIGNED,
+                    typ
+                ))
+            }
+        }
         _ => return Err(anyhow!("unknown block type: {}", typ)),
     }
 }
 
-fn decode_float_block(tb: &[u8], vb: &[u8], sz: usize) -> anyhow::Result<Values> {
+pub fn decode_float_block(block: &[u8], values: &mut FloatValues) -> anyhow::Result<()> {
+    let (tb, vb, sz) = pre_decode(block, BLOCK_FLOAT64)?;
+    decode_float_block_values(tb, vb, sz, values)
+}
+
+pub fn decode_integer_block(block: &[u8], values: &mut IntegerValues) -> anyhow::Result<()> {
+    let (tb, vb, sz) = pre_decode(block, BLOCK_INTEGER)?;
+    decode_integer_block_values(tb, vb, sz, values)
+}
+
+pub fn decode_bool_block(block: &[u8], values: &mut BooleanValues) -> anyhow::Result<()> {
+    let (tb, vb, sz) = pre_decode(block, BLOCK_BOOLEAN)?;
+    decode_bool_block_values(tb, vb, sz, values)
+}
+
+pub fn decode_string_block(block: &[u8], values: &mut StringValues) -> anyhow::Result<()> {
+    let (tb, vb, sz) = pre_decode(block, BLOCK_STRING)?;
+    decode_string_block_values(tb, vb, sz, values)
+}
+
+pub fn decode_unsigned_block(block: &[u8], values: &mut UnsignedValues) -> anyhow::Result<()> {
+    let (tb, vb, sz) = pre_decode(block, BLOCK_UNSIGNED)?;
+    decode_unsigned_block_values(tb, vb, sz, values)
+}
+
+fn pre_decode(block: &[u8], expect_typ: u8) -> anyhow::Result<(&[u8], &[u8], usize)> {
+    if block.len() <= ENCODED_BLOCK_HEADER_SIZE {
+        return Err(anyhow!(
+            "decode of short block: got {}, exp {}",
+            block.len(),
+            ENCODED_BLOCK_HEADER_SIZE
+        ));
+    }
+
+    let (typ, tb, vb) = unpack_block(block)?;
+    if typ != expect_typ {
+        return Err(anyhow!(
+            "invalid block type: exp {}, got {}",
+            expect_typ,
+            typ
+        ));
+    }
+    let sz = timestamp::count_timestamps(tb)?;
+
+    Ok((tb, vb, sz))
+}
+
+fn decode_float_block_values(
+    tb: &[u8],
+    vb: &[u8],
+    sz: usize,
+    values: &mut FloatValues,
+) -> anyhow::Result<()> {
     let ts_dec = TimeDecoder::new(tb)?;
     let v_dec = FloatDecoder::new(vb)?;
-    let values = decode_block_using(sz, ts_dec, v_dec)?;
-    Ok(Values::Float(values))
+    decode_block_using(sz, ts_dec, v_dec, values)?;
+    Ok(())
 }
 
-fn decode_integer_block(tb: &[u8], vb: &[u8], sz: usize) -> anyhow::Result<Values> {
+fn decode_integer_block_values(
+    tb: &[u8],
+    vb: &[u8],
+    sz: usize,
+    values: &mut IntegerValues,
+) -> anyhow::Result<()> {
     let ts_dec = TimeDecoder::new(tb)?;
     let v_dec = IntegerDecoder::new(vb)?;
-    let values = decode_block_using(sz, ts_dec, v_dec)?;
-    Ok(Values::Integer(values))
+    decode_block_using(sz, ts_dec, v_dec, values)?;
+    Ok(())
 }
 
-fn decode_bool_block(tb: &[u8], vb: &[u8], sz: usize) -> anyhow::Result<Values> {
+fn decode_bool_block_values(
+    tb: &[u8],
+    vb: &[u8],
+    sz: usize,
+    values: &mut BooleanValues,
+) -> anyhow::Result<()> {
     let ts_dec = TimeDecoder::new(tb)?;
     let v_dec = BooleanDecoder::new(vb)?;
-    let values = decode_block_using(sz, ts_dec, v_dec)?;
-    Ok(Values::Bool(values))
+    decode_block_using(sz, ts_dec, v_dec, values)?;
+    Ok(())
 }
 
-fn decode_str_block(tb: &[u8], vb: &[u8], sz: usize) -> anyhow::Result<Values> {
+fn decode_string_block_values(
+    tb: &[u8],
+    vb: &[u8],
+    sz: usize,
+    values: &mut StringValues,
+) -> anyhow::Result<()> {
     let ts_dec = TimeDecoder::new(tb)?;
     let v_dec = StringDecoder::new(vb)?;
-    let values = decode_block_using(sz, ts_dec, v_dec)?;
-    Ok(Values::Str(values))
+    decode_block_using(sz, ts_dec, v_dec, values)?;
+    Ok(())
 }
 
-fn decode_unsigned_block(tb: &[u8], vb: &[u8], sz: usize) -> anyhow::Result<Values> {
+fn decode_unsigned_block_values(
+    tb: &[u8],
+    vb: &[u8],
+    sz: usize,
+    values: &mut UnsignedValues,
+) -> anyhow::Result<()> {
     let ts_dec = TimeDecoder::new(tb)?;
     let v_dec = UnsignedDecoder::new(vb)?;
-    let values = decode_block_using(sz, ts_dec, v_dec)?;
-    Ok(Values::Unsigned(values))
+    decode_block_using(sz, ts_dec, v_dec, values)?;
+    Ok(())
 }
 fn decode_block_using<T>(
     sz: usize,
     mut ts_dec: impl Decoder<i64>,
     mut v_dec: impl Decoder<T>,
-) -> anyhow::Result<Vec<Value<T>>>
+    values: &mut Vec<Value<T>>,
+) -> anyhow::Result<()>
 where
     T: Debug + Clone + PartialOrd + PartialEq,
     Value<T>: Capacity,
 {
-    let mut values = Vec::with_capacity(sz);
+    let remain = values.capacity() - values.len();
+    if remain < sz {
+        values.reserve_exact(sz - remain);
+    }
+
     for _ in 0..sz {
         if !ts_dec.next() {
             return Err(anyhow!("can not read all timestamp block"));
@@ -97,7 +227,7 @@ where
         values.push(Value::new(ts_dec.read(), v_dec.read()));
     }
 
-    Ok(values)
+    Ok(())
 }
 
 pub fn unpack_block(buf: &[u8]) -> anyhow::Result<(u8, &[u8], &[u8])> {

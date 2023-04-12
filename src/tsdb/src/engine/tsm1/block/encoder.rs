@@ -17,7 +17,7 @@ pub fn encode_block(dst: &mut Vec<u8>, values: Values) -> anyhow::Result<()> {
         Values::Float(values) => encode_float_block(dst, values),
         Values::Integer(values) => encode_integer_block(dst, values),
         Values::Bool(values) => encode_bool_block(dst, values),
-        Values::Str(values) => encode_str_block(dst, values),
+        Values::String(values) => encode_str_block(dst, values),
         Values::Unsigned(values) => encode_unsigned_block(dst, values),
     }
 }
