@@ -4,8 +4,7 @@ use bytes::BufMut;
 use influxdb_utils::time::unix_nano_to_time;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 
-use crate::engine::tsm1::file_store::reader::tsm_reader::TimeRange;
-use crate::engine::tsm1::file_store::INDEX_ENTRY_SIZE;
+use crate::engine::tsm1::file_store::{TimeRange, INDEX_ENTRY_SIZE};
 
 /// IndexEntry is the index information for a given block in a TSM file.
 pub struct IndexEntry {

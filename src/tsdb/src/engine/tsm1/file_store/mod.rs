@@ -39,6 +39,33 @@ pub(crate) const TMP_TSMFILE_EXTENSION: &'static str = "tmp";
 /// The extension used to describe corrupt snapshot files.
 pub(crate) const BAD_TSMFILE_EXTENSION: &'static str = "bad";
 
+/// TimeRange holds a min and max timestamp.
+#[derive(Clone)]
+pub struct TimeRange {
+    pub(crate) min: i64,
+    pub(crate) max: i64,
+}
+
+impl TimeRange {
+    pub fn new(min: i64, max: i64) -> Self {
+        Self { min, max }
+    }
+
+    pub fn unbound() -> Self {
+        Self::new(i64::MIN, i64::MAX)
+    }
+
+    pub fn overlaps(&self, other: &TimeRange) -> bool {
+        self.min <= other.max && self.max >= other.min
+    }
+}
+
+/// TimeRange holds a min and max timestamp.
+pub struct KeyRange<'a, 'b> {
+    min: &'a [u8],
+    max: &'b [u8],
+}
+
 #[cfg(test)]
 mod tests {
     use bytes::BufMut;

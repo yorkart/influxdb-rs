@@ -10,7 +10,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::mpsc::Sender;
 use tokio::sync::RwLock;
 
-use crate::engine::tsm1::file_store::reader::tsm_reader::TimeRange;
+use crate::engine::tsm1::file_store::TimeRange;
 use crate::engine::CompactionTempExtension;
 
 const TOMBSTONE_FILE_EXTENSION: &'static str = "tombstone";

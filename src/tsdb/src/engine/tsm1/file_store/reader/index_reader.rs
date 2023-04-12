@@ -9,8 +9,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::RwLock;
 
 use crate::engine::tsm1::file_store::index::{IndexEntries, IndexEntry};
-use crate::engine::tsm1::file_store::reader::tsm_reader::TimeRange;
-use crate::engine::tsm1::file_store::{INDEX_COUNT_SIZE, INDEX_ENTRY_SIZE};
+use crate::engine::tsm1::file_store::{TimeRange, INDEX_COUNT_SIZE, INDEX_ENTRY_SIZE};
 
 const NIL_OFFSET: u64 = u64::MAX;
 
