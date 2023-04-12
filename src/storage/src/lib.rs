@@ -1,5 +1,7 @@
 #[macro_use]
 extern crate async_trait;
+#[macro_use]
+extern crate serde;
 
 pub mod file;
 pub mod wrapper;
@@ -33,6 +35,132 @@ pub fn operator() -> std::io::Result<crate::opendal::Operator> {
     Ok(operator)
 }
 
+/// Config for storage backend fs.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StorageFsConfig {
+    pub root: String,
+}
+
+impl Default for StorageFsConfig {
+    fn default() -> Self {
+        Self {
+            root: "_data".to_string(),
+        }
+    }
+}
+
+impl StorageFsConfig {
+    /// init_fs_operator will init a opendal fs operator.
+    pub fn to_operator(&self) -> std::io::Result<impl crate::opendal::Builder> {
+        let mut builder = crate::opendal::services::Fs::default();
+
+        let mut path = self.root.clone();
+        if !path.starts_with('/') {
+            path = std::env::current_dir()
+                .unwrap()
+                .join(path)
+                .display()
+                .to_string();
+        }
+        builder.root(&path);
+
+        Ok(builder)
+    }
+}
+
+pub fn build_operator<B: crate::opendal::Builder>(
+    builder: B,
+) -> std::io::Result<crate::opendal::Operator> {
+    let ob = crate::opendal::Operator::new(builder)?;
+
+    let op = ob
+        // NOTE
+        //
+        // Magic happens here. We will add a layer upon original
+        // storage operator so that all underlying storage operations
+        // will send to storage runtime.
+        // .layer(crate::opendal::layers::RuntimeLayer::new(GlobalIORuntime::instance().inner()))
+        // Add retry
+        .layer(crate::opendal::layers::RetryLayer::new().with_jitter())
+        // Add metrics
+        .layer(crate::opendal::layers::MetricsLayer)
+        // Add logging
+        .layer(crate::opendal::layers::LoggingLayer::default())
+        // Add tracing
+        .layer(crate::opendal::layers::TracingLayer)
+        .finish();
+
+    Ok(op)
+}
+
+/// Storage params which contains the detailed storage info.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum StorageParams {
+    // Azblob(StorageAzblobConfig),
+    Fs(StorageFsConfig),
+    // Ftp(StorageFtpConfig),
+    // Gcs(StorageGcsConfig),
+    // #[cfg(feature = "storage-hdfs")]
+    // Hdfs(StorageHdfsConfig),
+    // Http(StorageHttpConfig),
+    // Ipfs(StorageIpfsConfig),
+    // Memory,
+    // Moka(StorageMokaConfig),
+    // Obs(StorageObsConfig),
+    // Oss(StorageOssConfig),
+    // S3(StorageS3Config),
+    // Redis(StorageRedisConfig),
+    // Webhdfs(StorageWebhdfsConfig),
+    //
+    // /// None means this storage type is none.
+    // ///
+    // /// This type is mostly for cache which mean bypass the cache logic.
+    // None,
+}
+
+#[derive(Clone, Debug)]
+pub struct StorageOperator {
+    operator: crate::opendal::Operator,
+    path: String,
+}
+
+impl StorageOperator {
+    pub fn new(operator: crate::opendal::Operator, path: String) -> Self {
+        Self { operator, path }
+    }
+
+    pub fn operator(&self) -> crate::opendal::Operator {
+        self.operator.clone()
+    }
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+}
+
+pub type SharedStorageOperator = std::sync::Arc<StorageOperator>;
+
+/// DataOperator is the operator to access persist data services.
+///
+/// # Notes
+///
+/// All data accessed via this operator will be persisted.
+#[derive(Clone, Debug)]
+pub struct DataOperator {
+    operator: crate::opendal::Operator,
+    params: StorageParams,
+}
+
+impl DataOperator {
+    /// Get the operator from PersistOperator
+    pub fn operator(&self) -> crate::opendal::Operator {
+        self.operator.clone()
+    }
+
+    pub fn params(&self) -> StorageParams {
+        self.params.clone()
+    }
+}
 // pub async fn copy(
 //     reader: &mut crate::opendal::Reader,
 //     writer: &mut crate::Writer,

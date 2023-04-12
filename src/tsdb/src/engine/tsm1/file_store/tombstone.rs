@@ -1,15 +1,19 @@
 use std::io;
 use std::io::{ErrorKind, SeekFrom};
-use std::path::{Path, PathBuf};
+use std::ops::Deref;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use async_compression::tokio::bufread::GzipDecoder;
 use async_compression::tokio::write::GzipEncoder;
 use influxdb_storage::opendal::{Operator, Reader};
-use influxdb_storage::Writer;
+use influxdb_storage::{SharedStorageOperator, StorageOperator, Writer};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::mpsc::Sender;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
+use crate::engine::tsm1::file_store::reader::block_reader::TSMBlock;
+use crate::engine::tsm1::file_store::reader::index_reader::TSMIndex;
 use crate::engine::tsm1::file_store::TimeRange;
 use crate::engine::CompactionTempExtension;
 
@@ -43,16 +47,55 @@ pub struct TombstoneStat {
     size: u32,
 }
 
+#[async_trait]
+pub trait TombstonerFilter: Send + Sync {
+    async fn filter(&self, key: &[u8]) -> bool;
+}
+
+pub(crate) struct IndexTombstonerFilter<I, B>
+where
+    I: TSMIndex,
+    B: TSMBlock,
+{
+    reader: Arc<RwLock<(I, B)>>,
+}
+
+impl<I, B> IndexTombstonerFilter<I, B>
+where
+    I: TSMIndex + Send + Sync,
+    B: TSMBlock + Send + Sync,
+{
+    pub fn new(reader: Arc<RwLock<(I, B)>>) -> Self {
+        Self { reader }
+    }
+}
+
+#[async_trait]
+impl<I, B> TombstonerFilter for IndexTombstonerFilter<I, B>
+where
+    I: TSMIndex + Send + Sync,
+    B: TSMBlock + Send + Sync,
+{
+    async fn filter(&self, key: &[u8]) -> bool {
+        let reader = self.reader.write().await;
+        let (i, _b) = reader.deref();
+        i.contains_key(key)
+    }
+}
+
 // Tombstoner records tombstones when entries are deleted.
-pub struct Tombstoner {
-    op: Operator,
-    tx: RwLock<Option<TombstoneTransaction>>,
+pub struct Tombstoner<F>
+where
+    F: TombstonerFilter,
+{
+    op: SharedStorageOperator,
+    tx: Mutex<Option<TombstoneTransaction>>,
 
     // Path is the location of the file to record tombstone. This should be the
     // full path to a TSM file.
     tombstone_path: PathBuf,
 
-    filter_fn: Box<dyn Fn(&[u8]) -> bool>,
+    filter_fn: F,
 
     // cache of the stats for this tombstone
     tombstone_stats: TombstoneStat,
@@ -63,16 +106,19 @@ pub struct Tombstoner {
     last_applied_offset: u64,
 }
 
-impl Tombstoner {
-    pub async fn new(
-        op: Operator,
-        tsm_path: impl AsRef<Path>,
-        filter_fn: Box<dyn Fn(&[u8]) -> bool>,
-    ) -> anyhow::Result<Self> {
-        let tombstone_path = Self::tombstone_path(tsm_path.as_ref().to_owned());
+impl<F> Tombstoner<F>
+where
+    F: TombstonerFilter,
+{
+    pub async fn new(tsm_op: SharedStorageOperator, filter_fn: F) -> anyhow::Result<Self> {
+        let tombstone_path = Self::tombstone_path(tsm_op.path().parse().unwrap());
+        let op = Arc::new(StorageOperator::new(
+            tsm_op.operator(),
+            tombstone_path.to_str().unwrap().to_string(),
+        ));
         Ok(Self {
             op,
-            tx: RwLock::new(None),
+            tx: Mutex::new(None),
             tombstone_path,
             filter_fn,
             tombstone_stats: TombstoneStat::default(),
@@ -107,7 +153,7 @@ impl Tombstoner {
 
     pub async fn add_range(&mut self, keys: &[&[u8]], time_range: TimeRange) -> anyhow::Result<()> {
         let mut filter_keys = keys;
-        while filter_keys.len() > 0 && (self.filter_fn)(filter_keys[0]) {
+        while filter_keys.len() > 0 && self.filter_fn.filter(filter_keys[0]).await {
             filter_keys = &filter_keys[1..];
         }
 
@@ -115,10 +161,11 @@ impl Tombstoner {
             return Ok(());
         }
 
-        let mut tx = self.tx.write().await;
+        let mut tx = self.tx.lock().await;
         if tx.is_none() {
             let new_tx =
-                TombstoneTransaction::begin(self.op.clone(), self.tombstone_path.clone()).await?;
+                TombstoneTransaction::begin(self.op.operator(), self.tombstone_path.clone())
+                    .await?;
             tx.replace(new_tx);
         }
         let tx = tx.as_mut().unwrap();
@@ -126,7 +173,7 @@ impl Tombstoner {
         self.stats_loaded = false;
 
         for k in filter_keys {
-            if !(self.filter_fn)(k) {
+            if !self.filter_fn.filter(k).await {
                 continue;
             }
             tx.write_tombstone(Tombstone::new(k.to_vec(), time_range.clone()))
@@ -137,7 +184,7 @@ impl Tombstoner {
     }
 
     pub async fn flush(&self) -> anyhow::Result<()> {
-        let mut tx = self.tx.write().await;
+        let mut tx = self.tx.lock().await;
         let tx = tx.take();
         if let Some(mut tx) = tx {
             let mut r = tx.commit().await;
@@ -152,7 +199,7 @@ impl Tombstoner {
     }
 
     pub async fn rollback(&self) -> anyhow::Result<()> {
-        let mut tx = self.tx.write().await;
+        let mut tx = self.tx.lock().await;
 
         let tx = tx.take();
         if let Some(tx) = tx {
@@ -164,9 +211,13 @@ impl Tombstoner {
 
     /// Delete removes all the tombstone files from disk.
     pub async fn delete(&self) -> anyhow::Result<()> {
-        let mut tx = self.tx.write().await;
+        let mut tx = self.tx.lock().await;
 
-        let _ = self.op.delete(self.tombstone_path.to_str().unwrap()).await;
+        let _ = self
+            .op
+            .operator()
+            .delete(self.tombstone_path.to_str().unwrap())
+            .await;
 
         let tx = tx.take();
         if let Some(tx) = tx {
@@ -188,17 +239,17 @@ impl Tombstoner {
     /// TombstoneFiles returns any tombstone files associated with Tombstoner's TSM file.
     pub async fn tombstone_stats(&mut self) -> anyhow::Result<TombstoneStat> {
         {
-            let _tx = self.tx.read().await;
+            let _tx = self.tx.lock().await;
             if self.stats_loaded {
                 return Ok(self.tombstone_stats.clone());
             }
         }
 
-        let _tx = self.tx.write().await;
+        let _tx = self.tx.lock().await;
 
         let tombstone_path = self.tombstone_path.to_str().unwrap();
 
-        let exist = self.op.is_exist(tombstone_path).await?;
+        let exist = self.op.operator().is_exist(tombstone_path).await?;
         if !exist {
             // The file doesn't exist so record that we tried to load it so
             // we don't continue to keep trying.  This is the common case.
@@ -207,7 +258,11 @@ impl Tombstoner {
             return Ok(self.tombstone_stats.clone());
         }
 
-        let meta = self.op.stat(self.tombstone_path.to_str().unwrap()).await?;
+        let meta = self
+            .op
+            .operator()
+            .stat(self.tombstone_path.to_str().unwrap())
+            .await?;
         self.tombstone_stats = TombstoneStat {
             tombstone_exists: true,
             path: tombstone_path.to_string(),
@@ -222,10 +277,11 @@ impl Tombstoner {
 
     /// Walk calls fn for every Tombstone under the Tombstoner.
     pub async fn walk(&self, sender: Sender<anyhow::Result<Tombstone>>) -> anyhow::Result<()> {
-        let mut tx = self.tx.write().await;
+        let mut tx = self.tx.lock().await;
         if tx.is_none() {
             let new_tx =
-                TombstoneTransaction::begin(self.op.clone(), self.tombstone_path.clone()).await?;
+                TombstoneTransaction::begin(self.op.operator(), self.tombstone_path.clone())
+                    .await?;
             tx.replace(new_tx);
         }
         let tx = tx.as_mut().unwrap();

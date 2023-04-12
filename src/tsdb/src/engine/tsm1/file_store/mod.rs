@@ -40,7 +40,7 @@ pub(crate) const TMP_TSMFILE_EXTENSION: &'static str = "tmp";
 pub(crate) const BAD_TSMFILE_EXTENSION: &'static str = "bad";
 
 /// TimeRange holds a min and max timestamp.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct TimeRange {
     pub(crate) min: i64,
     pub(crate) max: i64,

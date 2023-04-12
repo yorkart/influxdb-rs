@@ -1,6 +1,10 @@
+use std::io::SeekFrom;
 use std::sync::atomic::AtomicU64;
+use std::sync::Arc;
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
-use influxdb_storage::RandomAccess;
+use influxdb_storage::opendal::Reader;
+use influxdb_storage::SharedStorageOperator;
 use tokio::sync::RwLock;
 
 use crate::engine::tsm1::encoding::{
@@ -8,17 +12,20 @@ use crate::engine::tsm1::encoding::{
 };
 use crate::engine::tsm1::file_store::index::IndexEntry;
 use crate::engine::tsm1::file_store::reader::batch_deleter::BatchDeleter;
-use crate::engine::tsm1::file_store::reader::index_reader::TSMIndex;
+use crate::engine::tsm1::file_store::reader::block_reader::{DefaultBlockAccessor, TSMBlock};
+use crate::engine::tsm1::file_store::reader::index_reader::{IndirectIndex, TSMIndex};
 use crate::engine::tsm1::file_store::stat::FileStat;
-use crate::engine::tsm1::file_store::tombstone::{TombstoneStat, Tombstoner};
-use crate::engine::tsm1::file_store::TimeRange;
+use crate::engine::tsm1::file_store::tombstone::{
+    IndexTombstonerFilter, TombstoneStat, Tombstoner,
+};
+use crate::engine::tsm1::file_store::{TimeRange, MAGIC_NUMBER, VERSION};
 
 /// TSMFile represents an on-disk TSM file.
 #[async_trait]
-pub trait TSMReader {
+pub trait TSMReader: Sync + Send {
     /// path returns the underlying file path for the TSMFile.  If the file
     /// has not be written or loaded from disk, the zero value is returned.
-    async fn path(&self) -> &str;
+    fn path(&self) -> &str;
 
     // /// read returns all the values in the block where time t resides.
     // async fn read(&mut self, key: &[u8], t: i64) -> anyhow::Result<()>;
@@ -146,23 +153,22 @@ pub trait TSMReader {
     async fn free(&mut self) -> anyhow::Result<()>;
 }
 
-pub(crate) struct DefaultTSMReader<I>
+pub(crate) struct DefaultTSMReader<I, B>
 where
     I: TSMIndex,
+    B: TSMBlock,
 {
     /// refs is the count of active references to this reader.
     refs: AtomicU64,
 
-    mu: RwLock<bool>,
-
     /// accessor provides access and decoding of blocks for the reader.
-    accessor: Box<dyn RandomAccess>,
+    op: SharedStorageOperator,
 
     /// index is the index of all blocks.
-    index: RwLock<I>,
+    reader: Arc<RwLock<(I, B)>>,
 
     /// tombstoner ensures tombstoned keys are not available by the index.
-    tombstoner: Tombstoner,
+    tombstoner: Tombstoner<IndexTombstonerFilter<I, B>>,
 
     /// size is the size of the file on disk.
     size: i64,
@@ -176,21 +182,231 @@ where
     free_count: u64,
 }
 
-impl<I> DefaultTSMReader<I>
-where
-    I: TSMIndex,
-{
-    // pub fn new(op: Operator, path: impl AsRef<Path>) -> Self {
-    //     Self {
-    //         refs: AtomicU64::new(0),
-    //         mu: (),
-    //         accessor: (),
-    //         index: (),
-    //         tombstoner: (),
-    //         size: (),
-    //         last_modified: (),
-    //         access_count: (),
-    //         free_count: (),
-    //     }
-    // }
+impl DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
+    pub async fn new(op: SharedStorageOperator) -> anyhow::Result<Self> {
+        let operator = op.operator();
+        let mut reader = op.operator().reader(op.path()).await?;
+        Self::verify_version(&mut reader).await?;
+
+        reader.seek(SeekFrom::Start(0)).await?;
+
+        let stat = operator.stat(op.path()).await?;
+        let file_size = stat.content_length();
+        if file_size < 8 {
+            return Err(anyhow!(
+                "BlockAccessor: byte slice too small for IndirectIndex"
+            ));
+        }
+
+        let index_ofs_pos = file_size - 8;
+        reader.seek(SeekFrom::Start(index_ofs_pos)).await?;
+        let index_start = reader.read_u64().await?;
+
+        let index = IndirectIndex::new(
+            &mut reader,
+            index_start,
+            (index_ofs_pos - index_start) as u32,
+        )
+        .await?;
+        let block = DefaultBlockAccessor::new(index_start).await?;
+        let reader = Arc::new(RwLock::new((index, block)));
+
+        let tombstoner =
+            Tombstoner::new(op.clone(), IndexTombstonerFilter::new(reader.clone())).await?;
+
+        Ok(Self {
+            refs: Default::default(),
+            op,
+            reader: reader.clone(),
+            tombstoner,
+            size: 0,
+            last_modified: 0,
+            access_count: 0,
+            free_count: 0,
+        })
+    }
+
+    async fn verify_version(reader: &mut Reader) -> anyhow::Result<()> {
+        reader
+            .seek(SeekFrom::Start(0))
+            .await
+            .map_err(|e| anyhow!("init: error reading magic number of file: {}", e))?;
+
+        let magic_number = reader
+            .read_u32()
+            .await
+            .map_err(|e| anyhow!("init: error reading magic number of file: {}", e))?;
+        if magic_number != MAGIC_NUMBER {
+            return Err(anyhow!("can only read from tsm file"));
+        }
+
+        let version = reader
+            .read_u8()
+            .await
+            .map_err(|e| anyhow!("init: error reading version: {}", e))?;
+        if version != VERSION {
+            return Err(anyhow!(
+                "init: file is version {}. expected {}",
+                version,
+                VERSION
+            ));
+        }
+
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
+    fn path(&self) -> &str {
+        self.op.path()
+    }
+
+    async fn read_float_block_at(
+        &mut self,
+        entry: IndexEntry,
+        values: FloatValues,
+    ) -> anyhow::Result<()> {
+        todo!()
+    }
+
+    async fn read_integer_block_at(
+        &mut self,
+        entry: IndexEntry,
+        values: IntegerValues,
+    ) -> anyhow::Result<()> {
+        todo!()
+    }
+
+    async fn read_unsigned_block_at(
+        &mut self,
+        entry: IndexEntry,
+        values: UnsignedValues,
+    ) -> anyhow::Result<()> {
+        todo!()
+    }
+
+    async fn read_string_block_at(
+        &mut self,
+        entry: IndexEntry,
+        values: StringValues,
+    ) -> anyhow::Result<()> {
+        todo!()
+    }
+
+    async fn read_boolean_block_at(
+        &mut self,
+        entry: IndexEntry,
+        values: BooleanValues,
+    ) -> anyhow::Result<()> {
+        todo!()
+    }
+
+    async fn read_entries(
+        &mut self,
+        key: &[u8],
+        entries: &mut Vec<IndexEntry>,
+    ) -> anyhow::Result<()> {
+        todo!()
+    }
+
+    async fn contains_value(&mut self, key: &[u8], t: i64) -> bool {
+        todo!()
+    }
+
+    async fn contains(&mut self, key: &[u8]) -> bool {
+        todo!()
+    }
+
+    async fn overlaps_time_range(&mut self, min: i64, max: i64) -> bool {
+        todo!()
+    }
+
+    async fn overlaps_key_range(&mut self, min: &[u8], max: &[u8]) -> bool {
+        todo!()
+    }
+
+    async fn time_range(&self) -> (i64, i64) {
+        (0, 0)
+    }
+
+    async fn tombstone_range(&self, key: &[u8]) -> Vec<TimeRange> {
+        todo!()
+    }
+
+    async fn key_range(&self) -> (&[u8], &[u8]) {
+        todo!()
+    }
+
+    async fn key_count(&self) -> usize {
+        todo!()
+    }
+
+    async fn seek(&mut self, key: &[u8]) -> usize {
+        todo!()
+    }
+
+    async fn key_at(&mut self, idx: usize) -> (&[u8], u8) {
+        todo!()
+    }
+
+    async fn block_type(&mut self, key: &[u8]) -> anyhow::Result<u8> {
+        todo!()
+    }
+
+    async fn batch_delete(&mut self) -> Box<dyn BatchDeleter> {
+        todo!()
+    }
+
+    async fn delete(&mut self, keys: &[&[u8]]) -> anyhow::Result<()> {
+        todo!()
+    }
+
+    async fn delete_range(&mut self, keys: &[&[u8]], min: i64, max: i64) -> anyhow::Result<()> {
+        todo!()
+    }
+
+    async fn has_tombstones(&self) -> bool {
+        todo!()
+    }
+
+    async fn tombstone_stats(&self) -> TombstoneStat {
+        todo!()
+    }
+
+    async fn close(&mut self) -> anyhow::Result<()> {
+        todo!()
+    }
+
+    async fn size(&self) -> u32 {
+        todo!()
+    }
+
+    async fn rename(&mut self, path: &str) -> anyhow::Result<()> {
+        todo!()
+    }
+
+    async fn remove(&mut self) -> anyhow::Result<()> {
+        todo!()
+    }
+
+    async fn in_use(&self) -> bool {
+        todo!()
+    }
+
+    async fn use_ref(&mut self) {
+        todo!()
+    }
+
+    async fn use_unref(&mut self) {
+        todo!()
+    }
+
+    async fn stats(&self) -> FileStat {
+        todo!()
+    }
+
+    async fn free(&mut self) -> anyhow::Result<()> {
+        todo!()
+    }
 }
