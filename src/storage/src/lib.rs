@@ -133,8 +133,17 @@ impl StorageOperator {
     pub fn operator(&self) -> crate::opendal::Operator {
         self.operator.clone()
     }
+
     pub fn path(&self) -> &str {
         &self.path
+    }
+
+    pub async fn reader(&self) -> crate::opendal::Result<crate::opendal::Reader> {
+        self.operator.reader(self.path.as_str()).await
+    }
+
+    pub async fn delete(&self) -> crate::opendal::Result<()> {
+        self.operator.delete(self.path.as_str()).await
     }
 }
 

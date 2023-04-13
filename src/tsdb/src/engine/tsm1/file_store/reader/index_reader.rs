@@ -9,7 +9,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::RwLock;
 
 use crate::engine::tsm1::file_store::index::{IndexEntries, IndexEntry};
-use crate::engine::tsm1::file_store::{TimeRange, INDEX_COUNT_SIZE, INDEX_ENTRY_SIZE};
+use crate::engine::tsm1::file_store::{KeyRange, TimeRange, INDEX_COUNT_SIZE, INDEX_ENTRY_SIZE};
 
 const NIL_OFFSET: u64 = u64::MAX;
 
@@ -73,7 +73,7 @@ pub trait TSMIndex: Send + Sync {
 
     /// key_at returns the key in the index at the given position.
     async fn key_at(
-        &mut self,
+        &self,
         reader: &mut Reader,
         index: usize,
     ) -> anyhow::Result<Option<(Vec<u8>, u8)>>;
@@ -96,11 +96,11 @@ pub trait TSMIndex: Send + Sync {
     /// time_range returns the min and max time across all keys in the file.
     fn time_range(&self) -> TimeRange;
 
-    // /// tombstone_range returns ranges of time that are deleted for the given key.
-    // async fn tombstone_range(&self, key: &[u8]) -> &[TimeRange];
+    /// tombstone_range returns ranges of time that are deleted for the given key.
+    async fn tombstone_range(&self, key: &[u8]) -> Vec<TimeRange>;
 
     /// key_range returns the min and max keys in the file.
-    fn key_range(&self) -> (&[u8], &[u8]);
+    fn key_range(&self) -> KeyRange;
 
     /// Type returns the block type of the values stored for the key.  Returns one of
     /// BlockFloat64, BlockInt64, BlockBool, BlockString.  If key does not exist,
@@ -608,7 +608,7 @@ impl TSMIndex for IndirectIndex {
     }
 
     async fn key_at(
-        &mut self,
+        &self,
         reader: &mut Reader,
         index: usize,
     ) -> anyhow::Result<Option<(Vec<u8>, u8)>> {
@@ -658,8 +658,16 @@ impl TSMIndex for IndirectIndex {
         TimeRange::new(self.min_time, self.max_time)
     }
 
-    fn key_range(&self) -> (&[u8], &[u8]) {
-        (self.min_key.as_slice(), self.max_key.as_slice())
+    async fn tombstone_range(&self, key: &[u8]) -> Vec<TimeRange> {
+        let tombstones = self.tombstones.read().await;
+        tombstones.get(key).map(|x| x.to_vec()).unwrap_or_default()
+    }
+
+    fn key_range(&self) -> KeyRange {
+        KeyRange {
+            min: self.min_key.to_vec(),
+            max: self.max_key.to_vec(),
+        }
     }
 
     async fn block_type(&self, reader: &mut Reader, key: &[u8]) -> anyhow::Result<u8> {

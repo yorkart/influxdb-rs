@@ -61,9 +61,10 @@ impl TimeRange {
 }
 
 /// TimeRange holds a min and max timestamp.
-pub struct KeyRange<'a, 'b> {
-    min: &'a [u8],
-    max: &'b [u8],
+#[derive(Debug, Clone)]
+pub struct KeyRange {
+    pub(crate) min: Vec<u8>,
+    pub(crate) max: Vec<u8>,
 }
 
 #[cfg(test)]

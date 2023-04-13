@@ -56,7 +56,7 @@ pub(crate) trait TSMBlock: Send + Sync {
         entry: IndexEntry,
     ) -> anyhow::Result<Vec<u8>>;
     async fn rename(&mut self, path: &str) -> anyhow::Result<()>;
-    async fn close(self) -> anyhow::Result<()>;
+    async fn close(&mut self) -> anyhow::Result<()>;
     async fn free(&mut self) -> anyhow::Result<()>;
 }
 
@@ -173,7 +173,7 @@ impl TSMBlock for DefaultBlockAccessor {
         todo!()
     }
 
-    async fn close(self) -> anyhow::Result<()> {
+    async fn close(&mut self) -> anyhow::Result<()> {
         Ok(())
     }
 
