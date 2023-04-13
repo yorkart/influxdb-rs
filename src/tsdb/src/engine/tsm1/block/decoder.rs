@@ -115,13 +115,6 @@ pub fn decode_unsigned_block(block: &[u8], values: &mut UnsignedValues) -> anyho
 }
 
 fn pre_decode(block: &[u8], expect_typ: u8) -> anyhow::Result<(&[u8], &[u8], usize)> {
-    if block.len() < 4 {
-        return Err(anyhow!("decode of short block: can not read checksum"));
-    }
-
-    // skip checksum
-    let block = &block[4..];
-
     if block.len() <= ENCODED_BLOCK_HEADER_SIZE {
         return Err(anyhow!(
             "decode of short block: got {}, exp {}",

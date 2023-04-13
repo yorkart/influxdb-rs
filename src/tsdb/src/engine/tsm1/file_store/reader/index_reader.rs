@@ -249,13 +249,14 @@ impl IndirectIndex {
                 let offset = offsets[mid];
 
                 reader.seek(SeekFrom::Start(offset)).await?;
+
                 let key_len = reader.read_u16().await? as usize;
                 if key_buf.len() < key_len {
                     key_buf.resize(key_len, 0_u8);
                 } else if key_buf.len() > key_len {
                     key_buf.truncate(key_len);
                 }
-                reader.seek(SeekFrom::Start(offset + 2)).await?;
+
                 let n = reader.read(&mut key_buf).await?;
                 if n != key_len {
                     return Err(io::Error::new(
@@ -698,7 +699,7 @@ async fn read_key(accessor: &mut Reader, index_offset: u64) -> io::Result<(u16, 
 
     let mut key = Vec::with_capacity(key_len as usize);
     key.resize(key_len as usize, 0);
-    // accessor.seek(SeekFrom::Start(index_offset + 2)).await?;
+
     let n = accessor.read(&mut key).await?;
     if n != key_len as usize {
         return Err(io::Error::new(
@@ -728,7 +729,6 @@ async fn read_entries(
     offset += 1;
 
     // 2 byte count of index entries
-    accessor.seek(SeekFrom::Start(offset)).await?;
     let count = accessor.read_u16().await.map_err(|e| anyhow!(e))? as usize;
     offset += 2;
 
@@ -736,7 +736,6 @@ async fn read_entries(
 
     let mut entry_buf = [0_u8; INDEX_ENTRY_SIZE];
     for _ in 0..count {
-        accessor.seek(SeekFrom::Start(offset)).await?;
         accessor
             .read(&mut entry_buf)
             .await

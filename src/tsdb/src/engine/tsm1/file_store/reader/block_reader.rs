@@ -92,11 +92,12 @@ impl DefaultBlockAccessor {
             return Err(anyhow!("tsm file closed"));
         }
 
-        // TODO optimize: 这里buf大小不可控，可能会oom，应该才有固定大小的buf，以流式的方式解析
-        let mut buf = Vec::with_capacity(entry.size as usize);
-        buf.resize(entry.size as usize, 0);
-
         reader.seek(SeekFrom::Start(entry.offset)).await?;
+
+        let _checksum = reader.read_u32().await?;
+
+        let mut buf = Vec::with_capacity(entry.size as usize - 4);
+        buf.resize(entry.size as usize, 0);
         let n = reader.read(buf.as_mut_slice()).await?;
         if n != entry.size as usize {
             return Err(anyhow!("not enough entry were read"));
