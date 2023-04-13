@@ -69,16 +69,61 @@ pub struct KeyRange {
 
 #[cfg(test)]
 mod tests {
-    use bytes::BufMut;
+    use crate::engine::tsm1::block::BLOCK_FLOAT64;
+    use crate::engine::tsm1::encoding::{Value, Values};
+    use crate::engine::tsm1::file_store::index::IndexEntries;
+    use crate::engine::tsm1::file_store::reader::tsm_reader::{DefaultTSMReader, TSMReader};
+    use crate::engine::tsm1::file_store::writer::tsm_writer::{DefaultTSMWriter, TSMWriter};
+    use influxdb_storage::StorageOperator;
+    use std::sync::Arc;
 
-    use crate::engine::tsm1::file_store::{HEADER, MAGIC_NUMBER, VERSION};
+    #[tokio::test]
+    async fn test_tsm_reader() {
+        let dir = tempfile::tempdir().unwrap();
+        let tsm_file = dir.as_ref().join("tsm1_test");
+        println!("{}", tsm_file.to_str().unwrap());
 
-    #[test]
-    fn test_header() {
-        let mut buf = Vec::with_capacity(5);
-        buf.put_u32(MAGIC_NUMBER);
-        buf.put_u8(VERSION);
+        {
+            let mut w = DefaultTSMWriter::with_mem_buffer(&tsm_file).await.unwrap();
 
-        assert_eq!(buf.as_slice(), &HEADER);
+            let values = Values::Float(vec![
+                Value::new(1, 1.0),
+                Value::new(2, 3.0),
+                Value::new(3, 5.0),
+                Value::new(4, 7.0),
+            ]);
+
+            w.write("cpu".as_bytes(), values).await.unwrap();
+            w.write_index().await.unwrap();
+            w.close().await.unwrap();
+
+            let data = tokio::fs::read(tsm_file.clone()).await.unwrap();
+            println!("{:?}", data);
+        }
+
+        {
+            let op = influxdb_storage::operator().unwrap();
+            let op = Arc::new(StorageOperator::new(op, tsm_file.to_str().unwrap()));
+
+            let mut r = DefaultTSMReader::new(op).await.unwrap();
+
+            let mut entries = IndexEntries::new(BLOCK_FLOAT64);
+            r.read_entries("cpu".as_bytes(), &mut entries)
+                .await
+                .unwrap();
+
+            let mut float_values = Vec::new();
+            for entry in entries.entries {
+                r.read_float_block_at(entry, &mut float_values)
+                    .await
+                    .unwrap();
+            }
+
+            for v in float_values {
+                println!("{}, {}", v.unix_nano, v.value);
+            }
+
+            r.close().await.unwrap();
+        }
     }
 }

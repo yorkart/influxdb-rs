@@ -26,7 +26,7 @@ pub type Writer = crate::wrapper::TokioWriter;
 
 pub fn operator() -> std::io::Result<crate::opendal::Operator> {
     let mut builder = opendal::services::Fs::default();
-    builder.enable_path_check();
+    builder.root("/").enable_path_check();
 
     let operator = opendal::Operator::new(builder)?
         .layer(opendal::layers::LoggingLayer::default())
@@ -126,8 +126,11 @@ pub struct StorageOperator {
 }
 
 impl StorageOperator {
-    pub fn new(operator: crate::opendal::Operator, path: String) -> Self {
-        Self { operator, path }
+    pub fn new(operator: crate::opendal::Operator, path: &str) -> Self {
+        Self {
+            operator,
+            path: path.to_string(),
+        }
     }
 
     pub fn operator(&self) -> crate::opendal::Operator {

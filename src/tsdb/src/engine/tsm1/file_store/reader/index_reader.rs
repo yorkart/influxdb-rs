@@ -697,7 +697,8 @@ async fn read_key(accessor: &mut Reader, index_offset: u64) -> io::Result<(u16, 
     let key_len = accessor.read_u16().await?;
 
     let mut key = Vec::with_capacity(key_len as usize);
-    accessor.seek(SeekFrom::Start(index_offset + 2)).await?;
+    key.resize(key_len as usize, 0);
+    // accessor.seek(SeekFrom::Start(index_offset + 2)).await?;
     let n = accessor.read(&mut key).await?;
     if n != key_len as usize {
         return Err(io::Error::new(

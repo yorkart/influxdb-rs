@@ -2,10 +2,10 @@ use std::io::SeekFrom;
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 use influxdb_storage::opendal::Reader;
 use influxdb_storage::SharedStorageOperator;
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::RwLock;
 
 use crate::engine::tsm1::encoding::{
@@ -35,7 +35,7 @@ pub trait TSMReader: Sync + Send {
     // async fn read_at(&mut self, entry: IndexEntry, values: Values) -> anyhow::Result<()>;
 
     async fn read_float_block_at(
-        &mut self,
+        &self,
         entry: IndexEntry,
         values: &mut FloatValues,
     ) -> anyhow::Result<()>;
@@ -65,7 +65,7 @@ pub trait TSMReader: Sync + Send {
     ) -> anyhow::Result<()>;
 
     /// Entries returns the index entries for all blocks for the given key.
-    async fn read_entries(&mut self, key: &[u8], entries: &mut IndexEntries) -> anyhow::Result<()>;
+    async fn read_entries(&self, key: &[u8], entries: &mut IndexEntries) -> anyhow::Result<()>;
 
     /// Returns true if the TSMFile may contain a value with the specified
     /// key and time.
@@ -269,7 +269,7 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
     }
 
     async fn read_float_block_at(
-        &mut self,
+        &self,
         entry: IndexEntry,
         values: &mut FloatValues,
     ) -> anyhow::Result<()> {
@@ -333,7 +333,7 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
         b.read_boolean_block(&mut reader, entry, values).await
     }
 
-    async fn read_entries(&mut self, key: &[u8], entries: &mut IndexEntries) -> anyhow::Result<()> {
+    async fn read_entries(&self, key: &[u8], entries: &mut IndexEntries) -> anyhow::Result<()> {
         let mut reader = self.op.reader().await?;
 
         let inner = self.inner.read().await;

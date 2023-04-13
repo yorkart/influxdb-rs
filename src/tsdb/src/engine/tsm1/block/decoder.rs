@@ -115,6 +115,13 @@ pub fn decode_unsigned_block(block: &[u8], values: &mut UnsignedValues) -> anyho
 }
 
 fn pre_decode(block: &[u8], expect_typ: u8) -> anyhow::Result<(&[u8], &[u8], usize)> {
+    if block.len() < 4 {
+        return Err(anyhow!("decode of short block: can not read checksum"));
+    }
+
+    // skip checksum
+    let block = &block[4..];
+
     if block.len() <= ENCODED_BLOCK_HEADER_SIZE {
         return Err(anyhow!(
             "decode of short block: got {}, exp {}",
@@ -235,13 +242,17 @@ pub fn unpack_block(buf: &[u8]) -> anyhow::Result<(u8, &[u8], &[u8])> {
         return Err(anyhow!("unpackBlock: no data found"));
     }
 
+    let mut i = 0;
+
     // Unpack the type
-    let typ = buf[0];
+    let typ = buf[i];
+    i += 1;
 
     // Unpack the timestamp block length
-    let (ts_len, i) = u64::decode_var(buf).ok_or(anyhow!(
+    let (ts_len, n) = u64::decode_var(&buf[1..]).ok_or(anyhow!(
         "unpackBlock: unable to read timestamp block length"
     ))?;
+    i += n;
 
     // Unpack the timestamp bytes
     let ts_idx = i + ts_len as usize;

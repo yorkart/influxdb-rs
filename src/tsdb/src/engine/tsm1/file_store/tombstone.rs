@@ -114,7 +114,7 @@ where
         let tombstone_path = Self::tombstone_path(tsm_op.path().parse().unwrap());
         let op = Arc::new(StorageOperator::new(
             tsm_op.operator(),
-            tombstone_path.to_str().unwrap().to_string(),
+            tombstone_path.to_str().unwrap(),
         ));
         Ok(Self {
             op,
