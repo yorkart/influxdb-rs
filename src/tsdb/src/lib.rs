@@ -5,6 +5,8 @@ extern crate async_trait;
 
 // pub mod cache;
 pub mod engine;
+pub mod index;
+pub mod series;
 
 #[cfg(test)]
 mod tests {
