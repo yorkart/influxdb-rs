@@ -268,7 +268,7 @@ where
             path: tombstone_path.to_string(),
             last_modified: meta
                 .last_modified()
-                .map(|t| t.unix_timestamp_nanos())
+                .map(|t| t.timestamp_nanos())
                 .unwrap_or_default() as i64,
             size: meta.content_length() as u32,
         };

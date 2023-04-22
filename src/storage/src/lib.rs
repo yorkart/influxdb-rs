@@ -7,7 +7,9 @@ pub mod file;
 pub mod wrapper;
 
 pub mod opendal {
-    pub use opendal::{Builder, Error, Operator, Reader, Result, Writer};
+    pub use opendal::{
+        Builder, Entry, EntryMode, Error, ErrorKind, Metadata, Operator, Reader, Result, Writer,
+    };
 
     pub mod services {
         pub use opendal::services::Fs;
@@ -145,8 +147,39 @@ impl StorageOperator {
         self.operator.reader(self.path.as_str()).await
     }
 
+    pub async fn writer(&self) -> crate::opendal::Result<crate::opendal::Writer> {
+        self.operator.writer(self.path.as_str()).await
+    }
+
     pub async fn delete(&self) -> crate::opendal::Result<()> {
         self.operator.delete(self.path.as_str()).await
+    }
+
+    pub async fn rename(&self, to: &str) -> crate::opendal::Result<()> {
+        self.operator.rename(self.path.as_str(), to).await
+    }
+
+    pub async fn stat(&self) -> crate::opendal::Result<crate::opendal::Metadata> {
+        self.operator.stat(self.path.as_str()).await
+    }
+
+    pub async fn exist(&self) -> crate::opendal::Result<bool> {
+        if let Err(e) = self.stat().await {
+            if let crate::opendal::ErrorKind::NotFound = e.kind() {
+                Ok(false)
+            } else {
+                Err(e)
+            }
+        } else {
+            Ok(true)
+        }
+    }
+
+    pub fn to_tmp(&self, suffix: &str) -> Self {
+        Self::new(
+            self.operator(),
+            format!("{}.{}", self.path.as_str(), suffix).as_str(),
+        )
     }
 }
 

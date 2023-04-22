@@ -8,3 +8,4 @@ name = "influxdb_utils"
 
 [dependencies]
 chrono = "0.4"
+twox-hash = "1.6"
