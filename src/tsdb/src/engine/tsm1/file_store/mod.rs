@@ -69,13 +69,15 @@ pub struct KeyRange {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use influxdb_storage::StorageOperator;
+
     use crate::engine::tsm1::block::BLOCK_FLOAT64;
     use crate::engine::tsm1::encoding::{Value, Values};
     use crate::engine::tsm1::file_store::index::IndexEntries;
     use crate::engine::tsm1::file_store::reader::tsm_reader::{DefaultTSMReader, TSMReader};
     use crate::engine::tsm1::file_store::writer::tsm_writer::{DefaultTSMWriter, TSMWriter};
-    use influxdb_storage::StorageOperator;
-    use std::sync::Arc;
 
     #[tokio::test]
     async fn test_tsm_reader() {

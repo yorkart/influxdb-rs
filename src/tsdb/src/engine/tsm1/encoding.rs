@@ -1,3 +1,6 @@
+use crate::engine::tsm1::block::{
+    BLOCK_BOOLEAN, BLOCK_FLOAT64, BLOCK_INTEGER, BLOCK_STRING, BLOCK_UNSIGNED,
+};
 use std::fmt::Debug;
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
@@ -18,35 +21,62 @@ where
     }
 }
 
+#[async_trait]
 pub trait Capacity {
+    fn block_type() -> u8;
     fn encode_size(&self) -> usize;
 }
 
+#[async_trait]
 impl Capacity for Value<f64> {
+    fn block_type() -> u8 {
+        BLOCK_FLOAT64
+    }
+
     fn encode_size(&self) -> usize {
         16
     }
 }
 
+#[async_trait]
 impl Capacity for Value<i64> {
+    fn block_type() -> u8 {
+        BLOCK_INTEGER
+    }
+
     fn encode_size(&self) -> usize {
         16
     }
 }
 
+#[async_trait]
 impl Capacity for Value<u64> {
+    fn block_type() -> u8 {
+        BLOCK_UNSIGNED
+    }
+
     fn encode_size(&self) -> usize {
         16
     }
 }
 
+#[async_trait]
 impl Capacity for Value<bool> {
+    fn block_type() -> u8 {
+        BLOCK_BOOLEAN
+    }
+
     fn encode_size(&self) -> usize {
         9
     }
 }
 
+#[async_trait]
 impl Capacity for Value<Vec<u8>> {
+    fn block_type() -> u8 {
+        BLOCK_STRING
+    }
+
     fn encode_size(&self) -> usize {
         8 + self.value.len()
     }
@@ -64,12 +94,12 @@ pub trait TValues {
     fn merge(self, b: Self) -> Self;
 }
 
-pub type TypeValue<T> = Vec<Value<T>>;
+pub type FieldValue<T> = Vec<Value<T>>;
 
-impl<T> TValues for TypeValue<T>
+impl<T> TValues for FieldValue<T>
 where
     T: Debug + Clone + PartialOrd + PartialEq,
-    Value<T>: Capacity,
+    Value<T>: Capacity + Debug,
 {
     fn min_time(&self) -> i64 {
         self[0].unix_nano
@@ -240,11 +270,11 @@ where
     }
 }
 
-pub type FloatValues = Vec<Value<f64>>;
-pub type IntegerValues = Vec<Value<i64>>;
-pub type BooleanValues = Vec<Value<bool>>;
-pub type StringValues = Vec<Value<Vec<u8>>>;
-pub type UnsignedValues = Vec<Value<u64>>;
+pub type FloatValues = FieldValue<f64>;
+pub type IntegerValues = FieldValue<i64>;
+pub type BooleanValues = FieldValue<bool>;
+pub type StringValues = FieldValue<Vec<u8>>;
+pub type UnsignedValues = FieldValue<u64>;
 
 /// Values describes the various types of block data that can be held within a TSM file.
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
