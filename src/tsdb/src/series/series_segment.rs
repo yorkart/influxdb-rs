@@ -289,7 +289,7 @@ impl SeriesEntryIterator {
         })
     }
 
-    pub async fn reset(&mut self, read_offset: u32) {
+    pub fn reset(&mut self, read_offset: u32) {
         self.read_offset = read_offset;
     }
 

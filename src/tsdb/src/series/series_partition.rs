@@ -1,6 +1,7 @@
-use crate::series::series_file::SERIES_FILE_PARTITION_N;
+use futures::TryStreamExt;
 use influxdb_storage::{path_join, StorageOperator};
 
+use crate::series::series_file::SERIES_FILE_PARTITION_N;
 use crate::series::series_index::SeriesIndex;
 use crate::series::series_segment::{parse_series_segment_filename, SeriesSegment};
 
@@ -22,18 +23,23 @@ impl SeriesPartition {
     pub async fn new(id: u16, op: StorageOperator) -> anyhow::Result<Self> {
         op.create_dir().await?;
 
+        // open all segments
         let (segments, seq) = Self::open_segments(id, op.clone()).await?;
 
         // Init last segment for writes.
-        // segments[segments.len() -1 ].in
+        // noop
 
-        Self {
+        // open index
+        let index_path = path_join(op.path(), "index");
+        let index = SeriesIndex::new(op.to_op(index_path.as_str())).await?;
+
+        Ok(Self {
             id,
             op,
             segments,
-            index: (),
+            index,
             seq,
-        }
+        })
     }
 
     async fn open_segments(
@@ -43,7 +49,7 @@ impl SeriesPartition {
         let mut segments = Vec::new();
 
         let mut lister = op.list().await?;
-        while let Some(mut de) = lister.try_next().await? {
+        while let Some(de) = lister.try_next().await? {
             if let Ok(segment_id) = parse_series_segment_filename(de.name()) {
                 let segment = SeriesSegment::new(segment_id, op.to_op(de.path())).await?;
                 segments.push(segment);
@@ -58,7 +64,7 @@ impl SeriesPartition {
             let max_series_id = segment.max_series_id().await?;
             if max_series_id >= seq {
                 // Reset our sequence num to the next one to assign
-                seq = max_series_id + SERIES_FILE_PARTITION_N;
+                seq = max_series_id + SERIES_FILE_PARTITION_N as u64;
                 break;
             }
         }
