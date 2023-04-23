@@ -241,7 +241,7 @@ impl SeriesSegment {
     }
 
     /// max_series_id returns the highest series id in the segment.
-    pub async fn max_series_id(&mut self) -> anyhow::Result<u64> {
+    pub async fn max_series_id(&self) -> anyhow::Result<u64> {
         let mut itr = self.series_iterator().await?;
 
         let mut max = 0;

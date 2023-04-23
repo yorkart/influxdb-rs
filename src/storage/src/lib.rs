@@ -8,7 +8,8 @@ pub mod wrapper;
 
 pub mod opendal {
     pub use opendal::{
-        Builder, Entry, EntryMode, Error, ErrorKind, Metadata, Operator, Reader, Result, Writer,
+        Builder, Entry, EntryMode, Error, ErrorKind, Lister, Metadata, Operator, Reader, Result,
+        Writer,
     };
 
     pub mod services {
@@ -175,6 +176,21 @@ impl StorageOperator {
         }
     }
 
+    pub async fn list(&self) -> crate::opendal::Result<crate::opendal::Lister> {
+        self.operator.list(self.path.as_str()).await
+    }
+
+    pub async fn create_dir(&self) -> crate::opendal::Result<()> {
+        self.operator.create_dir(self.path.as_str()).await
+    }
+
+    pub fn to_op(&self, new_path: &str) -> Self {
+        Self {
+            operator: self.operator.clone(),
+            path: new_path.to_string(),
+        }
+    }
+
     pub fn to_tmp(&self, suffix: &str) -> Self {
         Self::new(
             self.operator(),
@@ -205,6 +221,22 @@ impl DataOperator {
     pub fn params(&self) -> StorageParams {
         self.params.clone()
     }
+}
+
+pub fn path_join(path1: &str, path2: &str) -> String {
+    let path1 = if path1.ends_with("/") {
+        &path1[0..path1.len() - 1]
+    } else {
+        path1
+    };
+
+    let path2 = if path2.starts_with("/") {
+        &path2[1..path1.len()]
+    } else {
+        path2
+    };
+
+    format!("{}/{}", path1, path2)
 }
 // pub async fn copy(
 //     reader: &mut crate::opendal::Reader,
