@@ -32,6 +32,13 @@ impl SeriesEntryFlag {
             Self::TombstoneFlag => SERIES_ENTRY_TOMBSTONE_FLAG,
         }
     }
+
+    pub fn into_key(self) -> anyhow::Result<Vec<u8>> {
+        match self {
+            Self::InsertFlag(key) => Ok(key),
+            Self::TombstoneFlag => Err(anyhow!("unsupported")),
+        }
+    }
 }
 
 pub struct SeriesEntry {
@@ -138,7 +145,7 @@ pub struct SeriesSegment {
     id: u16,
 
     op: StorageOperator,
-    writer: TokioWriter,
+    writer: Option<TokioWriter>,
     reader: Reader,
     write_offset: u32,
     max_file_size: u32,
@@ -160,13 +167,11 @@ impl SeriesSegment {
             return Err(anyhow!("file corruption: {}", op.path()));
         }
 
-        let writer = op.writer().await?;
-        let reader = op.reader().await?;
         let max_file_size = series_segment_size(id);
         Ok(Self {
             id,
             op,
-            writer: TokioWriter::new(writer),
+            writer: None,
             reader,
             write_offset,
             max_file_size,
@@ -192,33 +197,48 @@ impl SeriesSegment {
         Self::new(id, op).await
     }
 
-    pub async fn close(&mut self) -> anyhow::Result<()> {
-        self.writer.close().await?;
+    /// InitForWrite initializes a write handle for the segment.
+    /// This is only used for the last segment in the series file.
+    pub async fn init_for_write(&mut self) -> anyhow::Result<()> {
+        let writer = op.writer().await?;
+        self.writer = Some(writer);
+        Ok(())
+    }
+
+    pub async fn close_for_write(&mut self) -> anyhow::Result<()> {
+        let writer = self.writer.take();
+        if let Some(mut writer) = writer {
+            writer.close().await?;
+        }
         Ok(())
     }
 
     /// write_log_entry writes entry data into the segment.
     /// Returns the offset of the beginning of the entry.
-    pub async fn write_log_entry(&mut self, entry: SeriesEntry) -> anyhow::Result<u64> {
-        if !self.can_write(&entry) {
+    pub async fn write_log_entry(&mut self, entry: &SeriesEntry) -> anyhow::Result<u64> {
+        if !self.can_write(entry) {
             return Err(anyhow!("series segment not writable"));
         }
 
         let offset = join_series_offset(self.id, self.write_offset);
 
-        entry.write_to(&mut self.writer).await?;
+        let writer = self.writer.as_mut().unwrap();
+        entry.write_to(writer).await?;
         self.write_offset += entry.len() as u32;
 
         Ok(offset)
     }
 
     pub fn can_write(&self, entry: &SeriesEntry) -> bool {
-        (self.write_offset as u64 + entry.len() as u64) < self.max_file_size as u64
+        self.writer.is_some()
+            && (self.write_offset as u64 + entry.len() as u64) < self.max_file_size as u64
     }
 
     /// Flush flushes the buffer to disk.
     pub async fn flush(&mut self) -> anyhow::Result<()> {
-        self.writer.flush().await?;
+        if let Some(writer) = self.writer.as_mut() {
+            writer.flush().await?;
+        }
         Ok(())
     }
 
