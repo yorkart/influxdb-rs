@@ -1,7 +1,5 @@
 use futures::TryStreamExt;
 use influxdb_storage::{path_join, StorageOperator};
-use std::collections::HashMap;
-use std::ops::Deref;
 use tokio::sync::RwLock;
 
 use crate::series::series_file::SERIES_FILE_PARTITION_N;
@@ -50,6 +48,26 @@ impl SeriesPartitionInner {
         }
     }
 
+    /// active_segment returns the last segment.
+    fn active_segment(&self) -> &SeriesSegment {
+        &self.segments[self.segments.len() - 1]
+    }
+
+    /// active_segment returns the last segment.
+    fn active_segment_mut(&mut self) -> &mut SeriesSegment {
+        let active = self.segments.len() - 1;
+        &mut self.segments[active]
+    }
+
+    /// file_size returns the size of all partitions, in bytes.
+    pub async fn file_size(&self) -> u64 {
+        let mut n = 0_u64;
+        for segment in &self.segments {
+            n += segment.size() as u64;
+        }
+        n
+    }
+
     pub async fn find_series(
         &self,
         keys: &[&[u8]],
@@ -82,7 +100,7 @@ impl SeriesPartitionInner {
         key_partition_ids: &[u16],
         ids: &mut [u64],
     ) -> anyhow::Result<()> {
-        let mut newKeyRanges = Vec::with_capacity(keys.len());
+        let mut new_key_ranges = Vec::with_capacity(keys.len());
         for i in 0..keys.len() {
             if key_partition_ids[i] != self.id || ids[i] != 0 {
                 continue;
@@ -102,14 +120,14 @@ impl SeriesPartitionInner {
             // Write to series log and save offset.
             let key_range = self.insert(key).await?;
             ids[i] = key_range.entry.id;
-            newKeyRanges.push(key_range);
+            new_key_ranges.push(key_range);
         }
 
         // Flush active segment writes so we can access data.
         self.active_segment_mut().flush().await?;
 
         // Add keys to hash map(s).
-        for key_range in newKeyRanges {
+        for key_range in new_key_ranges {
             let KeyRange { entry, offset } = key_range;
             self.index.exec_entry(entry, offset);
         }
@@ -128,23 +146,13 @@ impl SeriesPartitionInner {
     /// writeLogEntry appends an entry to the end of the active segment.
     /// If there is no more room in the segment then a new segment is added.
     async fn write_log_entry(&mut self, entry: &SeriesEntry) -> anyhow::Result<u64> {
-        let mut segment = self.active_segment();
-        if segment.can_write(entry) {
+        let mut segment = self.active_segment_mut();
+        if !segment.can_write(&entry) {
             self.create_segment().await?;
-            segment = self.active_segment();
+            segment = self.active_segment_mut();
         }
 
-        segment.write_log_entry(entry).await
-    }
-
-    /// active_segment returns the last segment.
-    fn active_segment(&self) -> &SeriesSegment {
-        &self.segments[self.segments.len() - 1]
-    }
-
-    /// active_segment returns the last segment.
-    fn active_segment_mut(&mut self) -> &mut SeriesSegment {
-        &mut self.segments[self.segments.len() - 1]
+        segment.write_log_entry(&entry).await
     }
 
     async fn create_segment(&mut self) -> anyhow::Result<()> {
@@ -162,6 +170,37 @@ impl SeriesPartitionInner {
         self.segments.push(segment);
 
         Ok(())
+    }
+
+    /// delete_series_id flags a series as permanently deleted.
+    /// If the series is reintroduced later then it must create a new id.
+    pub async fn delete_series_id(&mut self, id: u64) -> anyhow::Result<()> {
+        if self.index.id_delete(id).await? {
+            return Ok(());
+        }
+
+        let entry = SeriesEntry::new(SeriesEntryFlag::TombstoneFlag, id);
+        let offset = self.write_log_entry(&entry).await?;
+
+        // Flush active segment write.
+        let segment = self.active_segment_mut();
+        segment.flush().await?;
+
+        // Mark tombstone in memory.
+        self.index.exec_entry(entry, offset);
+
+        Ok(())
+    }
+
+    /// IsDeleted returns true if the ID has been deleted before.
+    pub async fn is_delete(&self, id: u64) -> anyhow::Result<bool> {
+        self.index.id_delete(id).await
+    }
+
+    /// series_key returns the series key for a given id.
+    pub async fn series_key(&self, id: u64) -> anyhow::Result<Vec<u8>> {
+        let offset = self.index.find_offset_by_id(id).await?;
+        self.series_key_by_offset(offset).await
     }
 
     async fn series_key_by_offset(&self, offset: u64) -> anyhow::Result<Vec<u8>> {
@@ -183,6 +222,23 @@ impl SeriesPartitionInner {
 
         return Ok(vec![]);
     }
+
+    /// find_id_by_series_key return the series id for the series key.
+    pub async fn find_id_by_series_key(&self, key: &[u8]) -> anyhow::Result<u64> {
+        self.index.find_id_by_series_key(&self.segments, key).await
+    }
+
+    /// series_count returns the number of series.
+    pub fn series_count(&self) -> u64 {
+        self.index.count()
+    }
+
+    // /// series_iterator returns a list of all series ids.
+    // pub async fn series_iterator(&self) -> anyhow::Result<u64> {
+    //     for segment in &self.segments {
+    //         segment.series_iterator().await?;
+    //     }
+    // }
 }
 
 /// SeriesPartition represents a subset of series file data.
@@ -211,8 +267,8 @@ impl SeriesPartition {
 
         Ok(Self {
             id,
-            op,
-            inner: RwLock::new(SeriesPartitionInner::new(id, segments, index)),
+            op: op.clone(),
+            inner: RwLock::new(SeriesPartitionInner::new(id, op, segments, index, seq)),
             seq,
         })
     }
@@ -251,7 +307,8 @@ impl SeriesPartition {
             segments.push(segment);
         }
 
-        segments[segments.len() - 1].init_for_write().await?;
+        let active = segments.len() - 1;
+        (&mut segments[active]).init_for_write().await?;
         Ok((segments, seq))
     }
 
@@ -262,12 +319,8 @@ impl SeriesPartition {
 
     /// file_size returns the size of all partitions, in bytes.
     pub async fn file_size(&self) -> u64 {
-        let (segments, _index) = self.segments.read().await.deref();
-        let mut n = 0_u64;
-        for segment in segments {
-            n += segment.size() as u64;
-        }
-        n
+        let inner = self.inner.read().await;
+        inner.file_size().await
     }
 
     /// create_series_list_if_not_exists creates a list of series in bulk if they don't exist.
@@ -276,19 +329,18 @@ impl SeriesPartition {
         &self,
         keys: &[&[u8]],
         key_partition_ids: &[u16],
-    ) -> anyhow::Result<Vec<u64>> {
-        let mut ids = Vec::with_capacity(keys.len());
-        {
-            let (segments, index) = self.segments.read().await.deref();
-            for i in 0..keys.len() {
-                if key_partition_ids[i] != self.id {
-                    continue;
-                }
-
-                index.find_id_by_series_key()
-            }
+        ids: &mut [u64],
+    ) -> anyhow::Result<()> {
+        let write_required = {
+            let inner = self.inner.read().await;
+            inner.find_series(keys, key_partition_ids, ids).await?
+        };
+        // Exit if all series for this partition already exist.
+        if !write_required {
+            return Ok(());
         }
 
-        Ok(vec![])
+        let mut inner = self.inner.write().await;
+        inner.insert_series(keys, key_partition_ids, ids).await
     }
 }

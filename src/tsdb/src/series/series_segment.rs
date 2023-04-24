@@ -200,8 +200,8 @@ impl SeriesSegment {
     /// InitForWrite initializes a write handle for the segment.
     /// This is only used for the last segment in the series file.
     pub async fn init_for_write(&mut self) -> anyhow::Result<()> {
-        let writer = op.writer().await?;
-        self.writer = Some(writer);
+        let writer = self.op.writer().await?;
+        self.writer = Some(TokioWriter::new(writer));
         Ok(())
     }
 
@@ -326,6 +326,35 @@ impl SeriesEntryIterator {
         Ok(Some((se, offset)))
     }
 }
+
+// /// https://stackoverflow.com/questions/65663021/how-to-call-an-async-function-in-poll-method
+// impl Stream for SeriesEntryIterator {
+//     type Item = anyhow::Result<(SeriesEntry, u64)>;
+//
+//     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+//         let entry_offset = self.read_offset;
+//         if entry_offset >= self.max_offset {
+//             return Poll::Ready(None);
+//         }
+//
+//         let mut f = SeriesEntry::read_from(&mut self.reader);
+//         let f = Pin::new(&mut f);
+//         let n = f.poll(cx);
+//
+//         match n {
+//             Poll::Ready(r) => match r {
+//                 Ok((se, len)) => {
+//                     self.read_offset += len as u32;
+//
+//                     let offset = join_series_offset(self.segment_id, entry_offset as u32);
+//                     Poll::Ready(Some(Ok((se, offset))))
+//                 }
+//                 Err(e) => Poll::Ready(Some(Err(e))),
+//             },
+//             Poll::Pending => Poll::Pending,
+//         }
+//     }
+// }
 
 /// series_segment_size returns the maximum size of the segment.
 /// The size goes up by powers of 2 starting from 4MB and reaching 256MB.

@@ -15,7 +15,7 @@ use tokio::sync::{Mutex, RwLock};
 use crate::engine::tsm1::file_store::reader::block_reader::TSMBlock;
 use crate::engine::tsm1::file_store::reader::index_reader::TSMIndex;
 use crate::engine::tsm1::file_store::TimeRange;
-use crate::engine::CompactionTempExtension;
+use crate::engine::COMPACTION_TEMP_EXTENSION;
 
 const TOMBSTONE_FILE_EXTENSION: &'static str = "tombstone";
 
@@ -306,7 +306,7 @@ impl TombstoneTransaction {
             let parent = tombstone_path.parent().unwrap();
             let file_name = tombstone_path.file_name().unwrap().to_str().unwrap();
 
-            parent.join(format!("{}.{}", file_name, CompactionTempExtension))
+            parent.join(format!("{}.{}", file_name, COMPACTION_TEMP_EXTENSION))
         };
 
         let tmp_path = tmp_path.to_str().unwrap();
