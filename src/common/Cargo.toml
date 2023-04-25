@@ -7,4 +7,5 @@ edition = "2021"
 name = "influxdb_common"
 
 [dependencies]
-
+anyhow = "1.0"
+async-trait = "0.1"

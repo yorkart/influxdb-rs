@@ -6,6 +6,9 @@ edition = "2021"
 [lib]
 name = "influxdb_tsdb"
 
+[dependencies.influxdb-common]
+version = "0.1.0"
+path = "../common"
 [dependencies.influxdb-query]
 version = "0.1.0"
 path = "../query"

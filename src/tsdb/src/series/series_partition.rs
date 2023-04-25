@@ -1,4 +1,5 @@
 use futures::TryStreamExt;
+use influxdb_common::iterator::{AsyncIterator, AsyncIterators};
 use influxdb_storage::{path_join, StorageOperator};
 use tokio::sync::RwLock;
 
@@ -236,12 +237,15 @@ impl SeriesPartitionInner {
         self.index.count()
     }
 
-    // /// series_iterator returns a list of all series ids.
-    // pub async fn series_iterator(&self) -> anyhow::Result<u64> {
-    //     for segment in &self.segments {
-    //         segment.series_iterator().await?;
-    //     }
-    // }
+    /// series_iterator returns a list of all series ids.
+    pub async fn series_iterator(&self) -> anyhow::Result<impl AsyncIterator> {
+        let mut itrs = Vec::with_capacity(self.segments.len());
+        for segment in &self.segments {
+            itrs.push(segment.series_iterator().await?);
+        }
+
+        Ok(AsyncIterators::new(itrs))
+    }
 }
 
 /// SeriesPartition represents a subset of series file data.
@@ -345,6 +349,11 @@ impl SeriesPartition {
 
         let mut inner = self.inner.write().await;
         inner.insert_series(keys, key_partition_ids, ids).await
+    }
+
+    pub async fn iterator(&self) -> anyhow::Result<impl AsyncIterator> {
+        let inner = self.inner.read().await;
+        inner.series_iterator().await
     }
 }
 

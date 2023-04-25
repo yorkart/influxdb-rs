@@ -1,6 +1,7 @@
 use std::io::{Cursor, SeekFrom};
 
 use bytes::Buf;
+use influxdb_common::iterator::AsyncIterator;
 use influxdb_storage::opendal::Reader;
 use influxdb_storage::opendal::Writer;
 use influxdb_storage::StorageOperator;
@@ -323,6 +324,15 @@ impl SeriesEntryIterator {
 
         let offset = join_series_offset(self.segment_id, entry_offset as u32);
         Ok(Some((se, offset)))
+    }
+}
+
+#[async_trait]
+impl AsyncIterator for SeriesEntryIterator {
+    type Item = (SeriesEntry, u64);
+
+    async fn try_next(&mut self) -> anyhow::Result<Option<Self::Item>> {
+        self.next().await
     }
 }
 
