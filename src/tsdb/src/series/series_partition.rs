@@ -131,6 +131,9 @@ impl SeriesPartitionInner {
             let KeyRange { entry, offset } = key_range;
             self.index.exec_entry(entry, offset);
         }
+
+        // Check if we've crossed the compaction threshold.
+
         Ok(())
     }
 
@@ -344,3 +347,7 @@ impl SeriesPartition {
         inner.insert_series(keys, key_partition_ids, ids).await
     }
 }
+
+/// SeriesPartitionCompactor represents an object reindex a series partition
+/// and optionally compacts segments.
+pub struct SeriesPartitionCompactor {}

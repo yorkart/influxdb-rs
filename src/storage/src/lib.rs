@@ -4,7 +4,6 @@ extern crate async_trait;
 extern crate serde;
 
 pub mod file;
-pub mod wrapper;
 
 pub mod opendal {
     pub use opendal::{
@@ -24,8 +23,6 @@ pub mod opendal {
         pub use opendal::raw::*;
     }
 }
-
-pub type Writer = crate::wrapper::TokioWriter;
 
 pub fn operator() -> std::io::Result<crate::opendal::Operator> {
     let mut builder = opendal::services::Fs::default();

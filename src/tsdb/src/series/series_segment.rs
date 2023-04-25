@@ -2,7 +2,7 @@ use std::io::{Cursor, SeekFrom};
 
 use bytes::Buf;
 use influxdb_storage::opendal::Reader;
-use influxdb_storage::wrapper::TokioWriter;
+use influxdb_storage::opendal::Writer;
 use influxdb_storage::StorageOperator;
 use regex::Regex;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
@@ -145,7 +145,7 @@ pub struct SeriesSegment {
     id: u16,
 
     op: StorageOperator,
-    writer: Option<TokioWriter>,
+    writer: Option<Writer>,
     reader: Reader,
     write_offset: u32,
     max_file_size: u32,
@@ -182,8 +182,7 @@ impl SeriesSegment {
         // Generate segment in temp location.
         let tmp_op = op.to_tmp(TMP_FILE_SUFFIX);
         {
-            let writer = tmp_op.writer().await?;
-            let mut writer = TokioWriter::new(writer);
+            let mut writer = tmp_op.writer().await?;
 
             let hdr = SeriesSegmentHeader::new();
             hdr.write_to(&mut writer).await?;
@@ -201,7 +200,7 @@ impl SeriesSegment {
     /// This is only used for the last segment in the series file.
     pub async fn init_for_write(&mut self) -> anyhow::Result<()> {
         let writer = self.op.writer().await?;
-        self.writer = Some(TokioWriter::new(writer));
+        self.writer = Some(writer);
         Ok(())
     }
 

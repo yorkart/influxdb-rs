@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use async_compression::tokio::bufread::GzipDecoder;
 use async_compression::tokio::write::GzipEncoder;
-use influxdb_storage::opendal::{Operator, Reader};
-use influxdb_storage::{SharedStorageOperator, StorageOperator, Writer};
+use influxdb_storage::opendal::{Operator, Reader, Writer};
+use influxdb_storage::{SharedStorageOperator, StorageOperator};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{Mutex, RwLock};
@@ -334,11 +334,8 @@ impl TombstoneTransaction {
         }
     }
     async fn prepare_v4(op: &Operator, tombstone_path: &str, tmp_path: &str) -> io::Result<Writer> {
-        let mut tmp_writer = {
-            // ignore the old content in tmp
-            let writer = op.writer(tmp_path).await?;
-            Writer::new(writer)
-        };
+        // ignore the old content in tmp
+        let mut tmp_writer = op.writer(tmp_path).await?;
 
         let exist = op.is_exist(tombstone_path).await?;
         if exist {
