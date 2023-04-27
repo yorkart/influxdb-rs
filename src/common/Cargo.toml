@@ -9,3 +9,4 @@ name = "influxdb_common"
 [dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
+bytes = "1"

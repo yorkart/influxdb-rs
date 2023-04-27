@@ -16,5 +16,5 @@ pub trait Sketch {
 
     fn encode(&self) -> Vec<u8>;
 
-    fn decode(data: &[u8]) -> anyhow::Result<Self>;
+    // fn decode(data: &[u8]) -> anyhow::Result<Self>;
 }

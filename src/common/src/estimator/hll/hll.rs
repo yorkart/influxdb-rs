@@ -1,8 +1,11 @@
+use crate::estimator::hll::compressed::CompressedList;
+use std::collections::HashMap;
+
 /// Current version of HLL implementation.
 const version: u8 = 2;
 
-/// DefaultPrecision is the default precision.
-const DefaultPrecision: usize = 16;
+/// DEFAULT_PRECISION is the default precision.
+const DEFAULT_PRECISION: usize = 16;
 
 fn beta(ez: f64) -> f64 {
     let zl = f64::ln(ez + 1_f64);
@@ -20,4 +23,26 @@ fn beta(ez: f64) -> f64 {
 /// paper: http://static.googleusercontent.com/media/research.google.com/en//pubs/archive/40671.pdf
 ///
 /// The HyperLogLog++ algorithm provides cardinality estimations.
-pub struct Plus {}
+pub struct Plus {
+    /// precision.
+    p: u8,
+    /// p' (sparse) precision to be used when p ∈ [4..pp] and pp < 64.
+    pp: u8,
+
+    /// Number of substream used for stochastic averaging of stream.
+    m: u32,
+    /// m' (sparse) number of substreams.
+    mp: u32,
+
+    /// alpha is used for bias correction.
+    alpha: f64,
+
+    /// Should we use a sparse sketch representation.
+    sparse: bool,
+    tmp_set: HashMap<u32, bool>,
+
+    /// The dense representation of the HLL.
+    dense_list: Vec<u8>,
+    /// values that can be stored in the sparse representation.
+    sparse_list: CompressedList,
+}
