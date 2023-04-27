@@ -7,5 +7,7 @@ edition = "2021"
 name = "influxdb_utils"
 
 [dependencies]
+anyhow = "1.0"
 chrono = "0.4"
 twox-hash = "1.6"
+hyperloglogplus = { version = "*", features = ["const-loop"] }

@@ -6,7 +6,12 @@ edition = "2021"
 [lib]
 name = "influxdb_common"
 
+[dependencies.influxdb-utils]
+version = "0.1.0"
+path = "../utils"
+
 [dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
 bytes = "1"
+hyperloglogplus = { version = "*", features = ["const-loop"] }

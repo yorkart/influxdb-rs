@@ -1,4 +1,5 @@
-pub mod hll;
+// pub mod hll;
+use hyperloglogplus::{HyperLogLog, HyperLogLogPlus};
 
 /// Sketch is the interface representing a sketch for estimating cardinality.
 pub trait Sketch {

@@ -80,6 +80,10 @@ impl CompressedList {
         }
     }
 
+    pub fn capacity(&self) -> usize {
+        self.b.capacity()
+    }
+
     pub fn append(&mut self, x: u32) {
         self.count += 1;
         // self.b.push((x - self.last) as u8);
