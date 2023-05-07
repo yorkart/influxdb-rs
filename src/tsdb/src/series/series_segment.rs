@@ -1,4 +1,6 @@
+use std::fmt::{Debug, Display, Formatter};
 use std::io::{Cursor, SeekFrom};
+use std::str::from_utf8_unchecked;
 
 use bytes::Buf;
 use influxdb_common::iterator::AsyncIterator;
@@ -14,7 +16,7 @@ const TMP_FILE_SUFFIX: &'static str = ".initializing";
 
 pub(crate) const SERIES_SEGMENT_VERSION: u8 = 1;
 pub(crate) const SERIES_SEGMENT_MAGIC: &'static str = "SSEG";
-pub(crate) const SERIES_SEGMENT_HEADER_SIZE: u32 = 5;
+pub(crate) const SERIES_SEGMENT_HEADER_SIZE: usize = 4 + 1; //  + 4;
 
 pub(crate) const SERIES_ENTRY_HEADER_SIZE: usize = 1 + 8;
 
@@ -24,6 +26,18 @@ const SERIES_ENTRY_TOMBSTONE_FLAG: u8 = 0x02;
 pub enum SeriesEntryFlag {
     InsertFlag(Vec<u8>),
     TombstoneFlag,
+}
+
+impl Debug for SeriesEntryFlag {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InsertFlag(series_key) => {
+                let s = unsafe { from_utf8_unchecked(series_key.as_slice()) };
+                write!(f, "Insert({})", s)
+            }
+            Self::TombstoneFlag => write!(f, "Tombstone"),
+        }
+    }
 }
 
 impl SeriesEntryFlag {
@@ -42,8 +56,11 @@ impl SeriesEntryFlag {
     }
 }
 
+#[derive(Debug)]
 pub struct SeriesEntry {
     pub(crate) flag: SeriesEntryFlag,
+    /// segment_id
+    /// todo maybe superfluous
     pub(crate) id: u64,
 }
 
@@ -106,30 +123,34 @@ impl SeriesEntry {
 /// SeriesSegmentHeader represents the header of a series segment.
 pub struct SeriesSegmentHeader {
     version: u8,
+    crc: u32,
 }
 
 impl SeriesSegmentHeader {
     pub fn new() -> Self {
         Self {
             version: SERIES_SEGMENT_VERSION,
+            crc: 0,
         }
     }
 
     pub async fn write_to<W: AsyncWrite + Send + Unpin>(&self, mut w: W) -> anyhow::Result<()> {
         w.write(SERIES_SEGMENT_MAGIC.as_bytes()).await?;
         w.write_u8(self.version).await?;
+        // w.write_u32(self.crc).await?;
 
         Ok(())
     }
-}
 
-impl<'a> TryFrom<&'a [u8]> for SeriesSegmentHeader {
-    type Error = anyhow::Error;
-
-    fn try_from(value: &'a [u8]) -> Result<Self, Self::Error> {
-        if value.len() < SERIES_SEGMENT_HEADER_SIZE as usize {
-            return Err(anyhow!(""));
+    pub async fn read_from<R: AsyncRead + AsyncSeek + Send + Unpin>(
+        mut r: R,
+    ) -> anyhow::Result<(Self, usize)> {
+        let mut value = [0_u8; SERIES_SEGMENT_HEADER_SIZE];
+        let n = r.read(value.as_mut()).await?;
+        if n != SERIES_SEGMENT_HEADER_SIZE {
+            return Err(anyhow!("not enough data for SeriesSegmentHeader"));
         }
+
         let magic = &value[..SERIES_SEGMENT_MAGIC.len()];
         if !magic.cmp(SERIES_SEGMENT_MAGIC.as_bytes()).is_eq() {
             return Err(anyhow!("invalid series segment"));
@@ -137,13 +158,15 @@ impl<'a> TryFrom<&'a [u8]> for SeriesSegmentHeader {
 
         let mut cursor = Cursor::new(&value[SERIES_SEGMENT_MAGIC.len()..]);
         let version = cursor.get_u8();
+        // let crc = cursor.get_u32();
+        let crc = 0;
 
-        Ok(Self { version })
+        Ok((Self { version, crc }, n))
     }
 }
 
 pub struct SeriesSegment {
-    id: u16,
+    segment_id: u16,
 
     op: StorageOperator,
     writer: Option<Writer>,
@@ -153,9 +176,16 @@ pub struct SeriesSegment {
 }
 
 impl SeriesSegment {
-    pub async fn new(id: u16, op: StorageOperator) -> anyhow::Result<Self> {
+    pub async fn open(segment_id: u16, op: StorageOperator) -> anyhow::Result<Self> {
         let mut reader = op.reader().await?;
         let file_size = op.stat().await?.content_length();
+
+        if file_size < SERIES_SEGMENT_HEADER_SIZE as u64 {
+            return Err(anyhow!("incomplete file"));
+        }
+
+        // check header
+        let (_header, _) = SeriesSegmentHeader::read_from(&mut reader).await?;
 
         let mut write_offset = SERIES_SEGMENT_HEADER_SIZE as u32;
         while write_offset < file_size as u32 {
@@ -164,13 +194,13 @@ impl SeriesSegment {
         }
 
         // todo replace with writer seek and ignore this check
-        if file_size != 0 && write_offset as u64 != file_size - 1 {
+        if file_size != 0 && write_offset as u64 != file_size {
             return Err(anyhow!("file corruption: {}", op.path()));
         }
 
-        let max_file_size = series_segment_size(id);
+        let max_file_size = series_segment_size(segment_id);
         Ok(Self {
-            id,
+            segment_id,
             op,
             writer: None,
             reader,
@@ -194,7 +224,7 @@ impl SeriesSegment {
 
         // todo truncate file: f.Truncate(int64(series_segment_size(id)))
 
-        Self::new(id, op).await
+        Self::open(id, op).await
     }
 
     /// InitForWrite initializes a write handle for the segment.
@@ -220,7 +250,7 @@ impl SeriesSegment {
             return Err(anyhow!("series segment not writable"));
         }
 
-        let offset = join_series_offset(self.id, self.write_offset);
+        let offset = join_series_offset(self.segment_id, self.write_offset);
 
         let writer = self.writer.as_mut().unwrap();
         entry.write_to(writer).await?;
@@ -245,7 +275,8 @@ impl SeriesSegment {
     /// create series iterator
     pub async fn series_iterator(&self, series_pos: u32) -> anyhow::Result<SeriesEntryIterator> {
         let reader = self.op.reader().await?;
-        let itr = SeriesEntryIterator::new(reader, series_pos, self.write_offset, self.id).await?;
+        let itr = SeriesEntryIterator::new(reader, series_pos, self.write_offset, self.segment_id)
+            .await?;
         Ok(itr)
     }
 
@@ -278,7 +309,7 @@ impl SeriesSegment {
     }
 
     pub fn id(&self) -> u16 {
-        self.id
+        self.segment_id
     }
 
     pub fn size(&self) -> u32 {
@@ -305,7 +336,7 @@ impl SeriesEntryIterator {
         segment_id: u16,
     ) -> anyhow::Result<Self> {
         // skip header & header check
-        let offset = SERIES_SEGMENT_HEADER_SIZE + series_pos;
+        let offset = SERIES_SEGMENT_HEADER_SIZE as u32 + series_pos;
         reader.seek(SeekFrom::Start(offset as u64)).await?;
         Ok(Self {
             reader,
@@ -315,7 +346,7 @@ impl SeriesEntryIterator {
         })
     }
 
-    pub async fn next(&mut self) -> anyhow::Result<Option<(SeriesEntry, u64)>> {
+    async fn next(&mut self) -> anyhow::Result<Option<(SeriesEntry, u64)>> {
         let entry_offset = self.read_offset;
         if entry_offset >= self.max_offset {
             return Ok(None);
@@ -379,7 +410,7 @@ pub fn is_valid_series_segment_filename(filename: &str) -> bool {
 /// find_segment returns a segment by id.
 pub fn find_segment(a: &[SeriesSegment], id: u16) -> Option<&SeriesSegment> {
     for segment in a {
-        if segment.id == id {
+        if segment.segment_id == id {
             return Some(segment);
         }
     }
@@ -404,4 +435,25 @@ pub async fn read_series_key_from_segments(
     }
 
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::series::series_segment::SeriesSegment;
+    use influxdb_common::iterator::AsyncIterator;
+    use influxdb_storage::{operator, StorageOperator};
+
+    #[tokio::test]
+    async fn test_segment_read() -> anyhow::Result<()> {
+        let op = operator()?;
+        let op = StorageOperator::new(op, "/Users/yorkart/.influxdb/data/stress/_series/00/0000");
+        let mut segment = SeriesSegment::open(0, op).await?;
+
+        let mut itr = segment.series_iterator(0).await?;
+        while let Some((entry, offset)) = itr.try_next().await? {
+            println!(">{:?} -> {}", entry, offset);
+        }
+
+        Ok(())
+    }
 }

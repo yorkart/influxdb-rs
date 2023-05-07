@@ -219,7 +219,7 @@ impl SeriesPartitionInner {
             }
 
             let mut itr = segment.series_iterator(pos).await?;
-            let (entry, _) = itr.next().await?.ok_or(anyhow!("key not found"))?;
+            let (entry, _) = itr.try_next().await?.ok_or(anyhow!("key not found"))?;
             return entry.flag.into_key();
         }
 
@@ -288,7 +288,7 @@ impl SeriesPartition {
         let mut lister = op.list().await?;
         while let Some(de) = lister.try_next().await? {
             if let Ok(segment_id) = parse_series_segment_filename(de.name()) {
-                let segment = SeriesSegment::new(segment_id, op.to_op(de.path())).await?;
+                let segment = SeriesSegment::open(segment_id, op.to_op(de.path())).await?;
                 segments.push(segment);
             }
         }
