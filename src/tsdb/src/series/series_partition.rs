@@ -54,7 +54,7 @@ impl SeriesPartitionInner {
         &self.segments[self.segments.len() - 1]
     }
 
-    /// active_segment returns the last segment.
+    /// active_segment returns the last segment as mut.
     fn active_segment_mut(&mut self) -> &mut SeriesSegment {
         let active = self.segments.len() - 1;
         &mut self.segments[active]
@@ -218,8 +218,7 @@ impl SeriesPartitionInner {
                 continue;
             }
 
-            let mut itr = segment.series_iterator().await?;
-            itr.reset(pos);
+            let mut itr = segment.series_iterator(pos).await?;
             let (entry, _) = itr.next().await?.ok_or(anyhow!("key not found"))?;
             return entry.flag.into_key();
         }
@@ -241,7 +240,7 @@ impl SeriesPartitionInner {
     pub async fn series_iterator(&self) -> anyhow::Result<impl AsyncIterator> {
         let mut itrs = Vec::with_capacity(self.segments.len());
         for segment in &self.segments {
-            itrs.push(segment.series_iterator().await?);
+            itrs.push(segment.series_iterator(0).await?);
         }
 
         Ok(AsyncIterators::new(itrs))

@@ -8,17 +8,7 @@ use crate::engine::tsm1::codec::varint::{VarInt, MAX_VARINT_LEN64};
 pub(crate) const SERIES_FILE_PARTITION_N: usize = 8;
 
 /// read_series_key returns the series key from the beginning of the buffer.
-pub fn read_series_key(data: &[u8]) -> anyhow::Result<(&[u8], &[u8])> {
-    let (sz, n) = u64::decode_var(data).ok_or(anyhow!("varint parse error"))?;
-
-    let mid = sz as usize + n;
-    let key = &data[..mid];
-    let remainder = &data[mid..];
-
-    Ok((key, remainder))
-}
-
-pub async fn read_series_key1<R: AsyncRead + AsyncSeek + Send + Unpin>(
+pub async fn read_series_key<R: AsyncRead + AsyncSeek + Send + Unpin>(
     mut r: R,
 ) -> anyhow::Result<(Vec<u8>, usize)> {
     let offset = r.seek(SeekFrom::Current(0)).await?;

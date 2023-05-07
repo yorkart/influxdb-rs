@@ -8,13 +8,13 @@ use influxdb_storage::StorageOperator;
 use regex::Regex;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 
-use crate::series::series_file::read_series_key1;
+use crate::series::series_file::read_series_key;
 
 const TMP_FILE_SUFFIX: &'static str = ".initializing";
 
 pub(crate) const SERIES_SEGMENT_VERSION: u8 = 1;
 pub(crate) const SERIES_SEGMENT_MAGIC: &'static str = "SSEG";
-pub(crate) const SERIES_SEGMENT_HEADER_SIZE: usize = 5;
+pub(crate) const SERIES_SEGMENT_HEADER_SIZE: u32 = 5;
 
 pub(crate) const SERIES_ENTRY_HEADER_SIZE: usize = 1 + 8;
 
@@ -91,7 +91,7 @@ impl SeriesEntry {
 
         let (flag, len) = match flag {
             SERIES_ENTRY_INSERT_FLAG => {
-                let (key, len) = read_series_key1(r).await?;
+                let (key, len) = read_series_key(r).await?;
                 Ok((SeriesEntryFlag::InsertFlag(key), len))
             }
             SERIES_ENTRY_TOMBSTONE_FLAG => Ok((SeriesEntryFlag::TombstoneFlag, 0)),
@@ -127,7 +127,7 @@ impl<'a> TryFrom<&'a [u8]> for SeriesSegmentHeader {
     type Error = anyhow::Error;
 
     fn try_from(value: &'a [u8]) -> Result<Self, Self::Error> {
-        if value.len() < SERIES_SEGMENT_HEADER_SIZE {
+        if value.len() < SERIES_SEGMENT_HEADER_SIZE as usize {
             return Err(anyhow!(""));
         }
         let magic = &value[..SERIES_SEGMENT_MAGIC.len()];
@@ -242,15 +242,16 @@ impl SeriesSegment {
         Ok(())
     }
 
-    pub async fn series_iterator(&self) -> anyhow::Result<SeriesEntryIterator> {
+    /// create series iterator
+    pub async fn series_iterator(&self, series_pos: u32) -> anyhow::Result<SeriesEntryIterator> {
         let reader = self.op.reader().await?;
-        let itr = SeriesEntryIterator::new(reader, self.write_offset, self.id).await?;
+        let itr = SeriesEntryIterator::new(reader, series_pos, self.write_offset, self.id).await?;
         Ok(itr)
     }
 
     /// append_series_ids appends all the segments ids to a slice. Returns the new slice.
     pub async fn series_ids(&mut self) -> anyhow::Result<Vec<u64>> {
-        let mut itr = self.series_iterator().await?;
+        let mut itr = self.series_iterator(0).await?;
 
         let mut ids = Vec::new();
         while let Some((entry, _offset)) = itr.next().await? {
@@ -262,7 +263,7 @@ impl SeriesSegment {
 
     /// max_series_id returns the highest series id in the segment.
     pub async fn max_series_id(&self) -> anyhow::Result<u64> {
-        let mut itr = self.series_iterator().await?;
+        let mut itr = self.series_iterator(0).await?;
 
         let mut max = 0;
         while let Some((entry, _offset)) = itr.next().await? {
@@ -297,20 +298,21 @@ pub struct SeriesEntryIterator {
 }
 
 impl SeriesEntryIterator {
-    pub async fn new(mut reader: Reader, max_offset: u32, segment_id: u16) -> anyhow::Result<Self> {
+    pub async fn new(
+        mut reader: Reader,
+        series_pos: u32,
+        max_offset: u32,
+        segment_id: u16,
+    ) -> anyhow::Result<Self> {
         // skip header & header check
-        let offset = SERIES_SEGMENT_HEADER_SIZE as u64;
-        reader.seek(SeekFrom::Start(offset)).await?;
+        let offset = SERIES_SEGMENT_HEADER_SIZE + series_pos;
+        reader.seek(SeekFrom::Start(offset as u64)).await?;
         Ok(Self {
             reader,
-            read_offset: offset as u32,
+            read_offset: offset,
             max_offset,
             segment_id,
         })
-    }
-
-    pub fn reset(&mut self, read_offset: u32) {
-        self.read_offset = read_offset;
     }
 
     pub async fn next(&mut self) -> anyhow::Result<Option<(SeriesEntry, u64)>> {
@@ -391,8 +393,8 @@ pub async fn read_series_key_from_segments(
 ) -> anyhow::Result<Option<Vec<u8>>> {
     let (segment_id, pos) = split_series_offset(offset);
     if let Some(segment) = find_segment(a, segment_id) {
-        let mut itr = segment.series_iterator().await?;
-        itr.reset(pos - SERIES_ENTRY_HEADER_SIZE as u32);
+        let pos = pos - SERIES_ENTRY_HEADER_SIZE as u32;
+        let mut itr = segment.series_iterator(pos).await?;
         if let Some((entry, _len)) = itr.next().await? {
             return match entry.flag {
                 SeriesEntryFlag::InsertFlag(key) => Ok(Some(key)),
