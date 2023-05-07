@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io::SeekFrom;
 
+use crate::common::Position;
 use influxdb_storage::StorageOperator;
 use influxdb_utils::rhh::{dist, hash_key};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
@@ -25,36 +26,6 @@ const SERIES_INDEX_HEADER_SIZE: u32 = 0 +
     8 + 8 + // key/id map offset & size
     8 + 8 + // id/offset map offset & size
     0;
-
-#[derive(Default)]
-struct Position {
-    offset: u64,
-    size: u64,
-}
-
-impl Position {
-    pub async fn write_to<W: AsyncWrite + Send + Unpin>(&self, mut w: W) -> anyhow::Result<()> {
-        w.write_u64(self.offset).await?;
-        w.write_u64(self.size).await?;
-        Ok(())
-    }
-
-    pub async fn read_from<R: AsyncRead + AsyncSeek + Send + Unpin>(
-        mut r: R,
-    ) -> anyhow::Result<(Self, usize)> {
-        let mut i = 0;
-
-        // Read Position's offset.
-        let offset = r.read_u64().await?;
-        i += 8;
-
-        // Read Position's size.
-        let size = r.read_u64().await?;
-        i += 8;
-
-        Ok((Self { offset, size }, i))
-    }
-}
 
 ///SeriesIndexHeader represents the header of a series index.
 #[derive(Default)]

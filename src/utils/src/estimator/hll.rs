@@ -35,4 +35,9 @@ impl Sketch for Plus {
     fn merge(&mut self, s: &Self) -> anyhow::Result<()> {
         self.hllp.merge(&s.hllp).map_err(|e| anyhow!(e))
     }
+
+    fn encode(&self) -> anyhow::Result<Vec<u8>> {
+        // serde_json::to_vec(&self.hllp).map_err(|e| anyhow!(e))
+        todo!()
+    }
 }

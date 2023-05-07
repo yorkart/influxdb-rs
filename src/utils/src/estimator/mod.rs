@@ -10,4 +10,6 @@ pub trait Sketch {
 
     /// Merge merges another sketch into this one.
     fn merge(&mut self, s: &Self) -> anyhow::Result<()>;
+
+    fn encode(&self) -> anyhow::Result<Vec<u8>>;
 }

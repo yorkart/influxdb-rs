@@ -6,6 +6,7 @@ extern crate async_trait;
 extern crate lazy_static;
 
 // pub mod cache;
+pub mod common;
 pub mod engine;
 pub mod index;
 pub mod series;
