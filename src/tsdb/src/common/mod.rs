@@ -1,12 +1,12 @@
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncWrite, AsyncWriteExt};
 
 #[derive(Default)]
-pub struct Position {
+pub struct Section {
     pub offset: u64,
     pub size: u64,
 }
 
-impl Position {
+impl Section {
     pub fn new(offset: u64, size: u64) -> Self {
         Self { offset, size }
     }

@@ -1,9 +1,10 @@
 use std::io::SeekFrom;
 
-use crate::common::Position;
 use influxdb_storage::DataOperator;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncWriteExt};
 use tokio::io::{AsyncSeekExt, AsyncWrite};
+
+use crate::common::Section;
 
 /// MEASUREMENT_BLOCK_VERSION is the version of the measurement block.
 pub const MEASUREMENT_BLOCK_VERSION: u16 = 1;
@@ -37,22 +38,22 @@ pub struct MeasurementBlockTrailer {
     version: u16,
 
     /// Offset & size of data section.
-    data: Position,
+    data: Section,
 
     /// Offset & size of hash map section.
-    hash_index: Position,
+    hash_index: Section,
 
     /// Offset and size of cardinality sketch for measurements.
-    sketch: Position,
+    sketch: Section,
 
     /// Offset and size of cardinality sketch for tombstoned measurements.
-    t_sketch: Position,
+    t_sketch: Section,
 }
 
 impl MeasurementBlockTrailer {
     pub async fn read_from<R: AsyncRead + AsyncSeek + Send + Unpin>(
         mut reader: R,
-        section: &Position,
+        section: &Section,
     ) -> anyhow::Result<Self> {
         if section.size != MEASUREMENT_TRAILER_SIZE as u64 {
             return Err(anyhow!("invalid index file"));
@@ -70,16 +71,16 @@ impl MeasurementBlockTrailer {
         reader.seek(SeekFrom::Start(section.offset)).await?;
 
         // Read data section info.
-        let (data, _) = Position::read_from(&mut reader).await?;
+        let (data, _) = Section::read_from(&mut reader).await?;
 
         // Read measurement block info.
-        let (hash_index, _) = Position::read_from(&mut reader).await?;
+        let (hash_index, _) = Section::read_from(&mut reader).await?;
 
         // Read measurement sketch info.
-        let (sketch, _) = Position::read_from(&mut reader).await?;
+        let (sketch, _) = Section::read_from(&mut reader).await?;
 
         // Read tombstone measurement sketch info.
-        let (t_sketch, _) = Position::read_from(&mut reader).await?;
+        let (t_sketch, _) = Section::read_from(&mut reader).await?;
 
         Ok(Self {
             version,

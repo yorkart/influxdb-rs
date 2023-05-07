@@ -1,11 +1,11 @@
 use std::collections::{HashMap, HashSet};
 use std::io::SeekFrom;
 
-use crate::common::Position;
 use influxdb_storage::StorageOperator;
 use influxdb_utils::rhh::{dist, hash_key};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 
+use crate::common::Section;
 use crate::series::series_segment::{
     read_series_key_from_segments, SeriesEntry, SeriesEntryFlag, SeriesSegment,
     SERIES_ENTRY_HEADER_SIZE,
@@ -38,8 +38,8 @@ pub struct SeriesIndexHeader {
     count: u64,
     capacity: u64,
 
-    key_id_map: Position,
-    id_offset_map: Position,
+    key_id_map: Section,
+    id_offset_map: Section,
 }
 
 impl SeriesIndexHeader {
@@ -96,11 +96,11 @@ impl SeriesIndexHeader {
         i += 8;
 
         // Read key/id map position.
-        let (key_id_map, len) = Position::read_from(&mut r).await?;
+        let (key_id_map, len) = Section::read_from(&mut r).await?;
         i += len;
 
         // Read offset/id map position.
-        let (id_offset_map, len) = Position::read_from(&mut r).await?;
+        let (id_offset_map, len) = Section::read_from(&mut r).await?;
         i += len;
 
         Ok((
