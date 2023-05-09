@@ -7,4 +7,5 @@ members = [
     "src/query",
     "src/storage",
     "src/utils",
+    "src/binaries"
 ]
