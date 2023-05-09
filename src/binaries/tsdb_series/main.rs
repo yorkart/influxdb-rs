@@ -1,6 +1,6 @@
 use clap::Parser;
 use influxdb_common::iterator::AsyncIterator;
-use influxdb_storage::{operator, StorageOperator};
+use influxdb_storage::StorageOperator;
 use influxdb_tsdb::series::series_segment::SeriesSegment;
 use serde::Deserialize;
 use serde::Serialize;
@@ -21,8 +21,7 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let op = operator()?;
-    let op = StorageOperator::new(op, config.path.as_str());
+    let op = StorageOperator::root(config.path.as_str())?;
     let segment = SeriesSegment::open(0, op).await?;
 
     let mut itr = segment.series_iterator(0).await?;
