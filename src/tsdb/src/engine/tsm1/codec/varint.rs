@@ -1,4 +1,6 @@
-use crate::engine::tsm1::encoding::zigzag_encoder;
+use crate::engine::tsm1::codec::zigzag;
+
+pub const MAX_VARINT_LEN64: usize = 10;
 
 /// Most-significant byte, == 0x80
 pub const MSB: u8 = 0b1000_0000;
@@ -24,7 +26,7 @@ fn required_encoded_space_unsigned(mut v: u64) -> usize {
 /// How many bytes an integer uses when being encoded as a VarInt.
 #[inline]
 fn required_encoded_space_signed(v: i64) -> usize {
-    required_encoded_space_unsigned(zigzag_encoder::zig_zag_encode(v))
+    required_encoded_space_unsigned(zigzag::zig_zag_encode(v))
 }
 
 /// Varint (variable length integer) encoding, as described in
@@ -45,11 +47,13 @@ pub trait VarInt: Sized + Copy {
 
     /// Helper: Encode a value and return the encoded form as Vec. The Vec must be at least
     /// `required_space()` bytes long.
-    fn encode_var_vec(self) -> Vec<u8> {
-        let mut v = Vec::new();
-        v.resize(self.required_space(), 0);
-        self.encode_var(&mut v);
-        v
+    fn encode_var_vec(self, buf: &mut Vec<u8>) -> usize {
+        let lower = buf.len();
+        let required = self.required_space();
+        let upper = lower + required;
+        buf.resize(upper, 0);
+        self.encode_var(&mut buf[lower..upper]);
+        required
     }
 }
 
@@ -155,7 +159,7 @@ impl VarInt for i64 {
     #[inline]
     fn decode_var(src: &[u8]) -> Option<(Self, usize)> {
         if let Some((result, size)) = u64::decode_var(src) {
-            Some((zigzag_encoder::zig_zag_decode(result) as Self, size))
+            Some((zigzag::zig_zag_decode(result) as Self, size))
         } else {
             None
         }
@@ -164,7 +168,7 @@ impl VarInt for i64 {
     #[inline]
     fn encode_var(self, dst: &mut [u8]) -> usize {
         assert!(dst.len() >= self.required_space());
-        let mut n: u64 = zigzag_encoder::zig_zag_encode(self as i64);
+        let mut n: u64 = zigzag::zig_zag_encode(self as i64);
         let mut i = 0;
 
         while n >= 0x80 {

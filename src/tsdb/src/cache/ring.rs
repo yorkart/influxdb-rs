@@ -2,8 +2,6 @@ use std::io::Cursor;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use anyhow::anyhow;
-
 use crate::cache::cache::Entry;
 use crate::cache::encoding::Value;
 use crate::cache::partition::Partition;

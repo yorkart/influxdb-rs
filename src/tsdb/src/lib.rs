@@ -1,15 +1,12 @@
 #[macro_use]
-extern crate trait_enum;
-extern crate core;
+extern crate anyhow;
+#[macro_use]
+extern crate async_trait;
+#[macro_use]
+extern crate lazy_static;
 
-pub mod cache;
+// pub mod cache;
+pub mod common;
 pub mod engine;
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        let result = 2 + 2;
-        assert_eq!(result, 4);
-    }
-}
+pub mod index;
+pub mod series;

@@ -1,5 +1,3 @@
-use anyhow::anyhow;
-
 /// maximum value that can be encoded.
 pub const MAX_VALUE: u64 = (1 << 60) - 1;
 
@@ -162,10 +160,13 @@ struct Packing {
     pub n: usize,
     pub bit: usize,
     pub unpack: fn(u64, &mut [u64]),
+
+    #[allow(dead_code)]
     pub pack: fn(&[u64]) -> u64,
 }
 
 impl Packing {
+    #[allow(dead_code)]
     pub fn new(n: usize, bit: usize, unpack: fn(u64, &mut [u64]), pack: fn(&[u64]) -> u64) -> Self {
         Self {
             n,
@@ -275,7 +276,7 @@ static SELECTOR: [Packing; 16] = [
     },
 ];
 
-fn count_bytes(b: &[u8]) -> anyhow::Result<usize> {
+pub fn count_bytes(b: &[u8]) -> anyhow::Result<usize> {
     let mut count = 0usize;
     let mut step = 0;
     while b.len() - step >= 8 {
@@ -384,7 +385,7 @@ pub fn encode(src: &[u64]) -> anyhow::Result<(u64, usize)> {
 /// Encode returns a packed slice of the values from src.  If a value is over
 /// 1 << 60, an error is returned.  The input src is modified to avoid extra
 /// allocations.  If you need to re-use, use a copy.
-pub fn encode_all(src: &mut [u64]) -> anyhow::Result<&[u64]> {
+pub fn encode_all(src: &mut [u64]) -> anyhow::Result<usize> {
     let src_len = src.len();
     let mut i = 0;
 
@@ -451,10 +452,10 @@ pub fn encode_all(src: &mut [u64]) -> anyhow::Result<&[u64]> {
         }
         j += 1;
     }
-    return Ok(&src[..j]);
+    return Ok(j);
 }
 
-fn decode(dst: &mut [u64], v: u64) -> anyhow::Result<usize> {
+pub fn decode(dst: &mut [u64], v: u64) -> anyhow::Result<usize> {
     let sel = (v >> 60) as usize;
     if sel >= 16 {
         return Err(anyhow!("invalid selector value: {}", sel));
@@ -465,7 +466,7 @@ fn decode(dst: &mut [u64], v: u64) -> anyhow::Result<usize> {
 
 /// Decode writes the uncompressed values from src to dst.  It returns the number
 /// of values written or an error.
-fn decode_all(dst: &mut [u64], src: &[u64]) -> anyhow::Result<usize> {
+pub fn decode_all(dst: &mut [u64], src: &[u64]) -> anyhow::Result<usize> {
     let mut j = 0;
     for v in src {
         let sel = (v >> 60) as usize;
@@ -999,7 +1000,7 @@ fn unpack1(v: u64, dst: &mut [u64]) {
 
 #[cfg(test)]
 mod tests {
-    use crate::engine::tsm1::encoding::simple8b_encoder::{
+    use crate::engine::tsm1::codec::simple8b::{
         count_bytes, count_bytes_between, decode_all, encode_all, Decoder, Encoder,
     };
 
@@ -1008,7 +1009,10 @@ mod tests {
         let mut src = vec![];
 
         // check for error
-        let encoded = encode_all(&mut src).expect("failed to encode src");
+        let encoded = {
+            let sz = encode_all(&mut src).expect("failed to encode src");
+            &src[..sz]
+        };
 
         let mut decoded = vec![];
         let n = decode_all(decoded.as_mut_slice(), encoded).expect("failed to decode src");
