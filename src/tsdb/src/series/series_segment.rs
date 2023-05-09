@@ -175,7 +175,7 @@ pub struct SeriesSegment {
 }
 
 impl SeriesSegment {
-    pub async fn open(segment_id: u16, op: StorageOperator) -> anyhow::Result<Self> {
+    pub async fn open(segment_id: u16, op: StorageOperator, verify: bool) -> anyhow::Result<Self> {
         let mut reader = op.reader().await?;
         let file_size = op.stat().await?.content_length();
 
@@ -186,11 +186,16 @@ impl SeriesSegment {
         // check header
         let (_header, _) = SeriesSegmentHeader::read_from(&mut reader).await?;
 
-        let mut write_offset = SERIES_SEGMENT_HEADER_SIZE as u32;
-        while write_offset < file_size as u32 {
-            let (_entry, len) = SeriesEntry::read_from(&mut reader).await?;
-            write_offset += len as u32;
-        }
+        let write_offset = if verify {
+            let mut write_offset = SERIES_SEGMENT_HEADER_SIZE as u32;
+            while write_offset < file_size as u32 {
+                let (_entry, len) = SeriesEntry::read_from(&mut reader).await?;
+                write_offset += len as u32;
+            }
+            write_offset
+        } else {
+            file_size as u32
+        };
 
         // todo replace with writer seek and ignore this check
         if file_size != 0 && write_offset as u64 != file_size {
@@ -223,7 +228,7 @@ impl SeriesSegment {
 
         // todo truncate file: f.Truncate(int64(series_segment_size(id)))
 
-        Self::open(id, op).await
+        Self::open(id, op, false).await
     }
 
     /// InitForWrite initializes a write handle for the segment.
@@ -447,7 +452,7 @@ mod tests {
     async fn test_segment_read() -> anyhow::Result<()> {
         let op = operator()?;
         let op = StorageOperator::new(op, "/Users/yorkart/.influxdb/data/stress/_series/00/0000");
-        let mut segment = SeriesSegment::open(0, op).await?;
+        let mut segment = SeriesSegment::open(0, op, false).await?;
 
         let mut itr = segment.series_iterator(0).await?;
         while let Some((entry, offset)) = itr.try_next().await? {

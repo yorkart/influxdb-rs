@@ -288,7 +288,7 @@ impl SeriesPartition {
         let mut lister = op.list().await?;
         while let Some(de) = lister.try_next().await? {
             if let Ok(segment_id) = parse_series_segment_filename(de.name()) {
-                let segment = SeriesSegment::open(segment_id, op.to_op(de.path())).await?;
+                let segment = SeriesSegment::open(segment_id, op.to_op(de.path()), true).await?;
                 segments.push(segment);
             }
         }

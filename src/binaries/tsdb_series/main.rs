@@ -22,12 +22,12 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let op = StorageOperator::root(config.path.as_str())?;
-    let segment = SeriesSegment::open(0, op).await?;
+    let segment = SeriesSegment::open(0, op, false).await?;
 
     let mut itr = segment.series_iterator(0).await?;
     let mut i = 0;
     while let Some((entry, offset)) = itr.try_next().await? {
-        println!("{}>{:?} @{}", i, entry, offset);
+        println!("{:010}>{:?} @{}", i, entry, offset);
         i += 1;
     }
 
