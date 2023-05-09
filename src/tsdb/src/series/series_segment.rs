@@ -1,6 +1,5 @@
-use std::fmt::{Debug, Display, Formatter};
+use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, SeekFrom};
-use std::str::from_utf8_unchecked;
 
 use bytes::Buf;
 use influxdb_common::iterator::AsyncIterator;
@@ -10,7 +9,7 @@ use influxdb_storage::StorageOperator;
 use regex::Regex;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 
-use crate::series::series_file::read_series_key;
+use crate::series::series_key::{read_series_key, SeriesKeyDecoder};
 
 const TMP_FILE_SUFFIX: &'static str = ".initializing";
 
@@ -32,8 +31,8 @@ impl Debug for SeriesEntryFlag {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InsertFlag(series_key) => {
-                let s = unsafe { from_utf8_unchecked(series_key.as_slice()) };
-                write!(f, "Insert({})", s)
+                let decode = SeriesKeyDecoder::new(series_key.as_slice());
+                write!(f, "Insert({:?})", decode)
             }
             Self::TombstoneFlag => write!(f, "Tombstone"),
         }
@@ -439,9 +438,10 @@ pub async fn read_series_key_from_segments(
 
 #[cfg(test)]
 mod tests {
-    use crate::series::series_segment::SeriesSegment;
     use influxdb_common::iterator::AsyncIterator;
     use influxdb_storage::{operator, StorageOperator};
+
+    use crate::series::series_segment::SeriesSegment;
 
     #[tokio::test]
     async fn test_segment_read() -> anyhow::Result<()> {
@@ -451,7 +451,7 @@ mod tests {
 
         let mut itr = segment.series_iterator(0).await?;
         while let Some((entry, offset)) = itr.try_next().await? {
-            println!(">{:?} -> {}", entry, offset);
+            println!(">{:?} @{}", entry, offset);
         }
 
         Ok(())

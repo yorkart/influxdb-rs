@@ -26,21 +26,21 @@ impl Debug for Tag {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let key = unsafe { from_utf8_unchecked(self.key.as_slice()) };
         let value = unsafe { from_utf8_unchecked(self.value.as_slice()) };
-        write!(f, "Tag{{key: {}, value: {}}}", key, value)
+
+        f.debug_struct("Tag")
+            .field("key", &key)
+            .field("value", &value)
+            .finish()
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Tags(Vec<Tag>);
 
 impl Tags {
     pub fn new(tags: Vec<Tag>) -> Self {
         Self(tags)
     }
-
-    // pub fn len(&self) -> usize {
-    //     self.0.len()
-    // }
 
     pub fn size(&self) -> usize {
         self.0.iter().map(|x| x.size()).sum()
