@@ -82,6 +82,8 @@ pub trait TSMIndex: Send + Sync {
     /// key_count returns the count of unique keys in the index.
     async fn key_count(&self) -> usize;
 
+    async fn key_iterator(&self, reader: Reader) -> anyhow::Result<KeyIterator>;
+
     /// seek returns the position in the index where key <= value in the index.
     async fn seek(&self, reader: &mut Reader, key: &[u8]) -> anyhow::Result<u64>;
 
@@ -112,7 +114,7 @@ pub trait TSMIndex: Send + Sync {
     async fn close(&mut self) -> anyhow::Result<()>;
 }
 
-struct KeyIterator {
+pub struct KeyIterator {
     reader: Reader,
     index_offset: u64,
     max_offset: u64,
@@ -148,7 +150,7 @@ impl AsyncIterator for KeyIterator {
         let _type = self.reader.read_u8().await?;
 
         let count = self.reader.read_u16().await?;
-        self.index_offset += (count as u64) * (INDEX_ENTRY_SIZE as u64);
+        self.index_offset += (key_len as u64) + 5 + (count as u64) * (INDEX_ENTRY_SIZE as u64);
 
         Ok(Some(key))
     }
@@ -674,6 +676,10 @@ impl TSMIndex for IndirectIndex {
         offsets.len()
     }
 
+    async fn key_iterator(&self, reader: Reader) -> anyhow::Result<KeyIterator> {
+        KeyIterator::new(reader, self.index_offset, self.index_len).await
+    }
+
     async fn seek(&self, reader: &mut Reader, key: &[u8]) -> anyhow::Result<u64> {
         let offsets = self.offsets.clone();
         let offsets = offsets.read().await;
@@ -734,14 +740,14 @@ impl TSMIndex for IndirectIndex {
     }
 }
 
-async fn read_key(accessor: &mut Reader, index_offset: u64) -> io::Result<(u16, Vec<u8>)> {
-    accessor.seek(SeekFrom::Start(index_offset)).await?;
-    let key_len = accessor.read_u16().await?;
+async fn read_key(reader: &mut Reader, index_offset: u64) -> io::Result<(u16, Vec<u8>)> {
+    reader.seek(SeekFrom::Start(index_offset)).await?;
+    let key_len = reader.read_u16().await?;
 
     let mut key = Vec::with_capacity(key_len as usize);
     key.resize(key_len as usize, 0);
 
-    let n = accessor.read(&mut key).await?;
+    let n = reader.read(&mut key).await?;
     if n != key_len as usize {
         return Err(io::Error::new(
             ErrorKind::InvalidData,

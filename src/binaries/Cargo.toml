@@ -26,3 +26,9 @@ name = "influxdb-tsdb-series"
 path = "tsdb_series/main.rs"
 doctest = false
 test = false
+
+[[bin]]
+name = "influxdb-tsdb-tsm"
+path = "tsdb_tsm/main.rs"
+doctest = false
+test = false

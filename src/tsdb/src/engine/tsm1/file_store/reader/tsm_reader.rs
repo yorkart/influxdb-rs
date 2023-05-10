@@ -14,7 +14,7 @@ use crate::engine::tsm1::encoding::{
 use crate::engine::tsm1::file_store::index::{IndexEntries, IndexEntry};
 use crate::engine::tsm1::file_store::reader::batch_deleter::BatchDeleter;
 use crate::engine::tsm1::file_store::reader::block_reader::{DefaultBlockAccessor, TSMBlock};
-use crate::engine::tsm1::file_store::reader::index_reader::{IndirectIndex, TSMIndex};
+use crate::engine::tsm1::file_store::reader::index_reader::{IndirectIndex, KeyIterator, TSMIndex};
 use crate::engine::tsm1::file_store::stat::FileStat;
 use crate::engine::tsm1::file_store::tombstone::{
     IndexTombstonerFilter, TombstoneStat, Tombstoner,
@@ -93,6 +93,8 @@ pub trait TSMReader: Sync + Send {
     /// key_count returns the number of distinct keys in the file.
     async fn key_count(&self) -> usize;
 
+    async fn key_iterator(&self) -> anyhow::Result<KeyIterator>;
+
     /// seek returns the position in the index with the key <= key.
     async fn seek(&mut self, key: &[u8]) -> anyhow::Result<u64>;
 
@@ -150,6 +152,10 @@ pub trait TSMReader: Sync + Send {
     async fn free(&mut self) -> anyhow::Result<()>;
 }
 
+pub async fn new_default_tsm_reader(op: StorageOperator) -> anyhow::Result<impl TSMReader> {
+    DefaultTSMReader::new(op).await
+}
+
 pub(crate) struct DefaultTSMReader<I, B>
 where
     I: TSMIndex,
@@ -181,7 +187,7 @@ where
 
 impl DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
     pub async fn new(op: StorageOperator) -> anyhow::Result<Self> {
-        let mut reader = op.operator().reader(op.path()).await?;
+        let mut reader = op.reader().await?;
         Self::verify_version(&mut reader).await?;
 
         reader.seek(SeekFrom::Start(0)).await?;
@@ -390,6 +396,15 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
         let (i, _b) = inner.deref();
 
         i.key_count().await
+    }
+
+    async fn key_iterator(&self) -> anyhow::Result<KeyIterator> {
+        let mut reader = self.op.reader().await?;
+
+        let inner = self.inner.read().await;
+        let (i, _b) = inner.deref();
+
+        i.key_iterator(reader).await
     }
 
     async fn seek(&mut self, key: &[u8]) -> anyhow::Result<u64> {
