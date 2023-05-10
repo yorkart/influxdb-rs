@@ -57,7 +57,7 @@ pub(crate) trait TSMBlock: Send + Sync {
     ) -> anyhow::Result<Vec<u8>>;
     async fn rename(&mut self, path: &str) -> anyhow::Result<()>;
     async fn close(&mut self) -> anyhow::Result<()>;
-    async fn free(&mut self) -> anyhow::Result<()>;
+    async fn free(&self) -> anyhow::Result<()>;
 }
 
 pub(crate) struct DefaultBlockAccessor {
@@ -178,7 +178,7 @@ impl TSMBlock for DefaultBlockAccessor {
         Ok(())
     }
 
-    async fn free(&mut self) -> anyhow::Result<()> {
+    async fn free(&self) -> anyhow::Result<()> {
         let access_count = self.access_count.load(Ordering::Relaxed);
         let free_count = self.free_count.load(Ordering::Relaxed);
 

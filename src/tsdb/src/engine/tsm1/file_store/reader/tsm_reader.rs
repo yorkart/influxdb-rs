@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use influxdb_storage::opendal::Reader;
-use influxdb_storage::SharedStorageOperator;
+use influxdb_storage::StorageOperator;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::RwLock;
 
@@ -150,15 +150,6 @@ pub trait TSMReader: Sync + Send {
     async fn free(&mut self) -> anyhow::Result<()>;
 }
 
-// struct InnerReader<I, B>
-//     where
-//         I: TSMIndex,
-//         B: TSMBlock, {
-//     index: I,
-//     block: B,
-//     tombstoner: Tombstoner<IndexTombstonerFilter<I, B>>,
-// }
-
 pub(crate) struct DefaultTSMReader<I, B>
 where
     I: TSMIndex,
@@ -168,7 +159,7 @@ where
     refs: AtomicU64,
 
     /// accessor provides access and decoding of blocks for the reader.
-    op: SharedStorageOperator,
+    op: StorageOperator,
 
     /// index is the index of all blocks.
     inner: Arc<RwLock<(I, B)>>,
@@ -189,14 +180,13 @@ where
 }
 
 impl DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
-    pub async fn new(op: SharedStorageOperator) -> anyhow::Result<Self> {
-        let operator = op.operator();
+    pub async fn new(op: StorageOperator) -> anyhow::Result<Self> {
         let mut reader = op.operator().reader(op.path()).await?;
         Self::verify_version(&mut reader).await?;
 
         reader.seek(SeekFrom::Start(0)).await?;
 
-        let stat = operator.stat(op.path()).await?;
+        let stat = op.stat().await?;
         let file_size = stat.content_length();
         if file_size < 8 {
             return Err(anyhow!(
@@ -354,8 +344,8 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
     async fn contains(&mut self, key: &[u8]) -> anyhow::Result<bool> {
         let mut reader = self.op.reader().await?;
 
-        let mut inner = self.inner.write().await;
-        let (i, _b) = inner.deref_mut();
+        let mut inner = self.inner.read().await;
+        let (i, _b) = inner.deref();
 
         i.contains(&mut reader, key).await
     }
@@ -522,8 +512,8 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
     }
 
     async fn free(&mut self) -> anyhow::Result<()> {
-        let mut inner = self.inner.write().await;
-        let (_i, b) = inner.deref_mut();
+        let mut inner = self.inner.read().await;
+        let (_i, b) = inner.deref();
 
         b.free().await
     }

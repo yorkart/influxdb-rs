@@ -7,7 +7,7 @@ use std::sync::Arc;
 use async_compression::tokio::bufread::GzipDecoder;
 use async_compression::tokio::write::GzipEncoder;
 use influxdb_storage::opendal::{Operator, Reader, Writer};
-use influxdb_storage::{SharedStorageOperator, StorageOperator};
+use influxdb_storage::StorageOperator;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{Mutex, RwLock};
@@ -88,7 +88,7 @@ pub struct Tombstoner<F>
 where
     F: TombstonerFilter,
 {
-    op: SharedStorageOperator,
+    op: StorageOperator,
     tx: Mutex<Option<TombstoneTransaction>>,
 
     // Path is the location of the file to record tombstone. This should be the
@@ -110,12 +110,9 @@ impl<F> Tombstoner<F>
 where
     F: TombstonerFilter,
 {
-    pub async fn new(tsm_op: SharedStorageOperator, filter_fn: F) -> anyhow::Result<Self> {
+    pub async fn new(tsm_op: StorageOperator, filter_fn: F) -> anyhow::Result<Self> {
         let tombstone_path = Self::tombstone_path(tsm_op.path().parse().unwrap());
-        let op = Arc::new(StorageOperator::new(
-            tsm_op.operator(),
-            tombstone_path.to_str().unwrap(),
-        ));
+        let op = tsm_op.to_op(tombstone_path.to_str().unwrap());
         Ok(Self {
             op,
             tx: Mutex::new(None),
