@@ -350,7 +350,7 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
     async fn contains(&mut self, key: &[u8]) -> anyhow::Result<bool> {
         let mut reader = self.op.reader().await?;
 
-        let mut inner = self.inner.read().await;
+        let inner = self.inner.read().await;
         let (i, _b) = inner.deref();
 
         i.contains(&mut reader, key).await
@@ -399,7 +399,7 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
     }
 
     async fn key_iterator(&self) -> anyhow::Result<KeyIterator> {
-        let mut reader = self.op.reader().await?;
+        let reader = self.op.reader().await?;
 
         let inner = self.inner.read().await;
         let (i, _b) = inner.deref();
@@ -519,15 +519,13 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
             has_tombstone,
             self.size().await,
             0,
-            time_range.min,
-            time_range.max,
-            key_range.min.to_vec(),
-            key_range.max.to_vec(),
+            time_range,
+            key_range,
         ))
     }
 
     async fn free(&mut self) -> anyhow::Result<()> {
-        let mut inner = self.inner.read().await;
+        let inner = self.inner.read().await;
         let (_i, b) = inner.deref();
 
         b.free().await
