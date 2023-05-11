@@ -216,7 +216,7 @@ impl IndirectIndex {
                 ));
             }
             reader.seek(SeekFrom::Start(i)).await?;
-            let key_len = reader.read_u16().await.map_err(|e| anyhow!(e))?;
+            let key_len = reader.read_u16().await?;
             i += 3 + key_len as u64;
 
             // count of index entries
@@ -226,7 +226,7 @@ impl IndirectIndex {
                 ));
             }
             reader.seek(SeekFrom::Start(i)).await?;
-            let count = reader.read_u16().await.map_err(|e| anyhow!(e))?;
+            let count = reader.read_u16().await?;
             i += INDEX_COUNT_SIZE as u64;
 
             // Find the min time for the block
@@ -235,7 +235,7 @@ impl IndirectIndex {
                 return Err(anyhow!("indirectIndex: not enough data for min time"));
             }
             reader.seek(SeekFrom::Start(i)).await?;
-            let min_t = reader.read_u64().await.map_err(|e| anyhow!(e))? as i64;
+            let min_t = reader.read_u64().await? as i64;
             if min_t < min_time {
                 min_time = min_t;
             }
@@ -248,7 +248,7 @@ impl IndirectIndex {
                 return Err(anyhow!("indirectIndex: not enough data for max time"));
             }
             reader.seek(SeekFrom::Start(i + 8)).await?;
-            let max_t = reader.read_u64().await.map_err(|e| anyhow!(e))? as i64;
+            let max_t = reader.read_u64().await? as i64;
             if max_t > max_time {
                 max_time = max_t
             }
@@ -257,10 +257,10 @@ impl IndirectIndex {
         }
 
         let first_ofs = offsets[0];
-        let (_, min_key) = read_key(reader, first_ofs).await.map_err(|e| anyhow!(e))?;
+        let (_, min_key) = read_key(reader, first_ofs).await?;
 
         let last_ofs = offsets[offsets.len() - 1];
-        let (_, max_key) = read_key(reader, last_ofs).await.map_err(|e| anyhow!(e))?;
+        let (_, max_key) = read_key(reader, last_ofs).await?;
 
         Ok(Self {
             index_offset,
@@ -335,10 +335,7 @@ impl IndirectIndex {
             return Ok(None);
         }
 
-        let i = self
-            .binary_search(reader, offsets, key)
-            .await
-            .map_err(|e| anyhow!(e))?;
+        let i = self.binary_search(reader, offsets, key).await?;
         if i < 0 {
             return Ok(None);
         }
@@ -363,8 +360,7 @@ impl TSMIndex for IndirectIndex {
         let start = {
             let start = self
                 .binary_search(reader, offsets.as_slice(), &keys[0])
-                .await
-                .map_err(|e| anyhow!(e))?;
+                .await?;
             isize::abs(start) as usize
         };
         let mut key_index = 0;
@@ -377,7 +373,7 @@ impl TSMIndex for IndirectIndex {
             let offset = offsets[i];
             let del_key = keys[key_index];
 
-            let (_, key) = read_key(reader, offset).await.map_err(|e| anyhow!(e))?;
+            let (_, key) = read_key(reader, offset).await?;
 
             while key_index < keys.len() && del_key.cmp(key.as_slice()).is_lt() {
                 key_index += 1;
@@ -637,7 +633,7 @@ impl TSMIndex for IndirectIndex {
         }
 
         let mut offset = offsets[index];
-        let (n, key) = read_key(reader, offset).await.map_err(|e| anyhow!(e))?;
+        let (n, key) = read_key(reader, offset).await?;
         offset += n as u64;
 
         let _ = read_entries(
@@ -662,11 +658,11 @@ impl TSMIndex for IndirectIndex {
         }
 
         let mut offset = offsets[index];
-        let (n, key) = read_key(reader, offset).await.map_err(|e| anyhow!(e))?;
+        let (n, key) = read_key(reader, offset).await?;
         offset += n as u64;
 
         reader.seek(SeekFrom::Start(offset)).await?;
-        let typ = reader.read_u8().await.map_err(|e| anyhow!(e))?;
+        let typ = reader.read_u8().await?;
 
         Ok(Some((key, typ)))
     }
@@ -731,7 +727,7 @@ impl TSMIndex for IndirectIndex {
         let (n, _key) = read_key(reader, offset).await?;
 
         reader.seek(SeekFrom::Start(offset + n as u64)).await?;
-        let typ = reader.read_u8().await.map_err(|e| anyhow!(e))?;
+        let typ = reader.read_u8().await?;
         Ok(typ)
     }
 
@@ -759,7 +755,7 @@ async fn read_key(reader: &mut Reader, index_offset: u64) -> io::Result<(u16, Ve
 }
 
 async fn read_entries(
-    accessor: &mut Reader,
+    reader: &mut Reader,
     mut offset: u64,
     max_offset: u64,
     entries: &mut IndexEntries,
@@ -770,26 +766,23 @@ async fn read_entries(
     }
 
     // 1 byte block type
-    accessor.seek(SeekFrom::Start(offset)).await?;
-    let typ = accessor.read_u8().await.map_err(|e| anyhow!(e))?;
+    reader.seek(SeekFrom::Start(offset)).await?;
+    let typ = reader.read_u8().await?;
     entries.set_block_type(typ);
     offset += 1;
 
     // 2 byte count of index entries
-    let count = accessor.read_u16().await.map_err(|e| anyhow!(e))? as usize;
+    let count = reader.read_u16().await? as usize;
     offset += 2;
 
     entries.clear_with_cap(count);
 
     let mut entry_buf = [0_u8; INDEX_ENTRY_SIZE];
     for _ in 0..count {
-        accessor
-            .read(&mut entry_buf)
-            .await
-            .map_err(|e| anyhow!(e))?;
+        reader.read(&mut entry_buf).await?;
         offset += INDEX_ENTRY_SIZE as u64;
 
-        let entry = IndexEntry::unmarshal_binary(&entry_buf)?;
+        let entry = IndexEntry::read_from(&entry_buf)?;
         entries.push(entry);
     }
 
