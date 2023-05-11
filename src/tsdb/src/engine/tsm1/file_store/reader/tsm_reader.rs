@@ -8,9 +8,7 @@ use influxdb_storage::StorageOperator;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::RwLock;
 
-use crate::engine::tsm1::encoding::{
-    BooleanValues, FloatValues, IntegerValues, StringValues, UnsignedValues,
-};
+use crate::engine::tsm1::encoding::BlockDecoder;
 use crate::engine::tsm1::file_store::index::{IndexEntries, IndexEntry};
 use crate::engine::tsm1::file_store::reader::batch_deleter::BatchDeleter;
 use crate::engine::tsm1::file_store::reader::block_reader::{DefaultBlockAccessor, TSMBlock};
@@ -28,41 +26,9 @@ pub trait TSMReader: Sync + Send {
     /// has not be written or loaded from disk, the zero value is returned.
     fn path(&self) -> &str;
 
-    // /// read returns all the values in the block where time t resides.
-    // async fn read(&mut self, key: &[u8], t: i64) -> anyhow::Result<()>;
-    //
-    // /// read_at returns all the values in the block identified by entry.
-    // async fn read_at(&mut self, entry: IndexEntry, values: Values) -> anyhow::Result<()>;
-
-    async fn read_float_block_at(
-        &self,
-        entry: IndexEntry,
-        values: &mut FloatValues,
-    ) -> anyhow::Result<()>;
-
-    async fn read_integer_block_at(
-        &mut self,
-        entry: IndexEntry,
-        values: &mut IntegerValues,
-    ) -> anyhow::Result<()>;
-
-    async fn read_unsigned_block_at(
-        &mut self,
-        entry: IndexEntry,
-        values: &mut UnsignedValues,
-    ) -> anyhow::Result<()>;
-
-    async fn read_string_block_at(
-        &mut self,
-        entry: IndexEntry,
-        values: &mut StringValues,
-    ) -> anyhow::Result<()>;
-
-    async fn read_boolean_block_at(
-        &mut self,
-        entry: IndexEntry,
-        values: &mut BooleanValues,
-    ) -> anyhow::Result<()>;
+    async fn read_block_at<T>(&self, entry: IndexEntry, values: &mut T) -> anyhow::Result<()>
+    where
+        T: BlockDecoder;
 
     /// Entries returns the index entries for all blocks for the given key.
     async fn read_entries(&self, key: &[u8], entries: &mut IndexEntries) -> anyhow::Result<()>;
@@ -264,69 +230,19 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
         self.op.path()
     }
 
-    async fn read_float_block_at(
-        &self,
-        entry: IndexEntry,
-        values: &mut FloatValues,
-    ) -> anyhow::Result<()> {
+    async fn read_block_at<T>(&self, entry: IndexEntry, values: &mut T) -> anyhow::Result<()>
+    where
+        T: BlockDecoder,
+    {
         let mut reader = self.op.reader().await?;
 
         let inner = self.inner.read().await;
         let (_i, b) = inner.deref();
 
-        b.read_float_block(&mut reader, entry, values).await
-    }
+        let block = b.read_block(&mut reader, entry).await?;
+        values.decode(block.as_slice())?;
 
-    async fn read_integer_block_at(
-        &mut self,
-        entry: IndexEntry,
-        values: &mut IntegerValues,
-    ) -> anyhow::Result<()> {
-        let mut reader = self.op.reader().await?;
-
-        let inner = self.inner.read().await;
-        let (_i, b) = inner.deref();
-
-        b.read_integer_block(&mut reader, entry, values).await
-    }
-
-    async fn read_unsigned_block_at(
-        &mut self,
-        entry: IndexEntry,
-        values: &mut UnsignedValues,
-    ) -> anyhow::Result<()> {
-        let mut reader = self.op.reader().await?;
-
-        let inner = self.inner.read().await;
-        let (_i, b) = inner.deref();
-
-        b.read_unsigned_block(&mut reader, entry, values).await
-    }
-
-    async fn read_string_block_at(
-        &mut self,
-        entry: IndexEntry,
-        values: &mut StringValues,
-    ) -> anyhow::Result<()> {
-        let mut reader = self.op.reader().await?;
-
-        let inner = self.inner.read().await;
-        let (_i, b) = inner.deref();
-
-        b.read_string_block(&mut reader, entry, values).await
-    }
-
-    async fn read_boolean_block_at(
-        &mut self,
-        entry: IndexEntry,
-        values: &mut BooleanValues,
-    ) -> anyhow::Result<()> {
-        let mut reader = self.op.reader().await?;
-
-        let inner = self.inner.read().await;
-        let (_i, b) = inner.deref();
-
-        b.read_boolean_block(&mut reader, entry, values).await
+        Ok(())
     }
 
     async fn read_entries(&self, key: &[u8], entries: &mut IndexEntries) -> anyhow::Result<()> {

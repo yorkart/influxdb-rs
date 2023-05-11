@@ -7,6 +7,7 @@ use tokio::io::{AsyncWrite, AsyncWriteExt};
 use crate::engine::tsm1::file_store::{TimeRange, INDEX_ENTRY_SIZE};
 
 /// IndexEntry is the index information for a given block in a TSM file.
+#[derive(Clone, Debug)]
 pub struct IndexEntry {
     /// The min and max time of all points stored in the block.
     pub min_time: i64,

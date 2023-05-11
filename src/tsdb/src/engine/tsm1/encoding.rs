@@ -1,7 +1,12 @@
+use std::fmt::Debug;
+
+use crate::engine::tsm1::block::decoder::{
+    decode_bool_block, decode_float_block, decode_integer_block, decode_string_block,
+    decode_unsigned_block,
+};
 use crate::engine::tsm1::block::{
     BLOCK_BOOLEAN, BLOCK_FLOAT64, BLOCK_INTEGER, BLOCK_STRING, BLOCK_UNSIGNED,
 };
-use std::fmt::Debug;
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct Value<T>
@@ -21,14 +26,12 @@ where
     }
 }
 
-#[async_trait]
-pub trait Capacity {
+pub trait TypeEncoder: Debug + Send + Clone + PartialOrd + PartialEq {
     fn block_type() -> u8;
     fn encode_size(&self) -> usize;
 }
 
-#[async_trait]
-impl Capacity for Value<f64> {
+impl TypeEncoder for Value<f64> {
     fn block_type() -> u8 {
         BLOCK_FLOAT64
     }
@@ -38,8 +41,7 @@ impl Capacity for Value<f64> {
     }
 }
 
-#[async_trait]
-impl Capacity for Value<i64> {
+impl TypeEncoder for Value<i64> {
     fn block_type() -> u8 {
         BLOCK_INTEGER
     }
@@ -49,8 +51,7 @@ impl Capacity for Value<i64> {
     }
 }
 
-#[async_trait]
-impl Capacity for Value<u64> {
+impl TypeEncoder for Value<u64> {
     fn block_type() -> u8 {
         BLOCK_UNSIGNED
     }
@@ -60,8 +61,7 @@ impl Capacity for Value<u64> {
     }
 }
 
-#[async_trait]
-impl Capacity for Value<bool> {
+impl TypeEncoder for Value<bool> {
     fn block_type() -> u8 {
         BLOCK_BOOLEAN
     }
@@ -71,8 +71,7 @@ impl Capacity for Value<bool> {
     }
 }
 
-#[async_trait]
-impl Capacity for Value<Vec<u8>> {
+impl TypeEncoder for Value<Vec<u8>> {
     fn block_type() -> u8 {
         BLOCK_STRING
     }
@@ -94,12 +93,16 @@ pub trait TValues {
     fn merge(self, b: Self) -> Self;
 }
 
-pub type FieldValue<T> = Vec<Value<T>>;
+pub trait BlockDecoder: Send {
+    fn decode(&mut self, block: &[u8]) -> anyhow::Result<()>;
+}
 
-impl<T> TValues for FieldValue<T>
+pub type TypeValues<T> = Vec<Value<T>>;
+
+impl<T> TValues for TypeValues<T>
 where
     T: Debug + Clone + PartialOrd + PartialEq,
-    Value<T>: Capacity + Debug,
+    Value<T>: TypeEncoder,
 {
     fn min_time(&self) -> i64 {
         self[0].unix_nano
@@ -270,11 +273,41 @@ where
     }
 }
 
-pub type FloatValues = FieldValue<f64>;
-pub type IntegerValues = FieldValue<i64>;
-pub type BooleanValues = FieldValue<bool>;
-pub type StringValues = FieldValue<Vec<u8>>;
-pub type UnsignedValues = FieldValue<u64>;
+pub type FloatValues = TypeValues<f64>;
+pub type IntegerValues = TypeValues<i64>;
+pub type BooleanValues = TypeValues<bool>;
+pub type StringValues = TypeValues<Vec<u8>>;
+pub type UnsignedValues = TypeValues<u64>;
+
+impl BlockDecoder for FloatValues {
+    fn decode(&mut self, block: &[u8]) -> anyhow::Result<()> {
+        decode_float_block(block, self)
+    }
+}
+
+impl BlockDecoder for IntegerValues {
+    fn decode(&mut self, block: &[u8]) -> anyhow::Result<()> {
+        decode_integer_block(block, self)
+    }
+}
+
+impl BlockDecoder for BooleanValues {
+    fn decode(&mut self, block: &[u8]) -> anyhow::Result<()> {
+        decode_bool_block(block, self)
+    }
+}
+
+impl BlockDecoder for StringValues {
+    fn decode(&mut self, block: &[u8]) -> anyhow::Result<()> {
+        decode_string_block(block, self)
+    }
+}
+
+impl BlockDecoder for UnsignedValues {
+    fn decode(&mut self, block: &[u8]) -> anyhow::Result<()> {
+        decode_unsigned_block(block, self)
+    }
+}
 
 /// Values describes the various types of block data that can be held within a TSM file.
 #[derive(Debug, Clone, PartialEq, PartialOrd)]

@@ -13,7 +13,7 @@ use crate::engine::tsm1::codec::unsigned::UnsignedDecoder;
 use crate::engine::tsm1::codec::varint::VarInt;
 use crate::engine::tsm1::codec::{timestamp, Decoder};
 use crate::engine::tsm1::encoding::{
-    BooleanValues, Capacity, FloatValues, IntegerValues, StringValues, UnsignedValues, Value,
+    BooleanValues, FloatValues, IntegerValues, StringValues, TypeEncoder, UnsignedValues, Value,
     Values,
 };
 
@@ -203,7 +203,7 @@ fn decode_block_using<T>(
 ) -> anyhow::Result<()>
 where
     T: Debug + Clone + PartialOrd + PartialEq,
-    Value<T>: Capacity,
+    Value<T>: TypeEncoder,
 {
     let remain = values.capacity() - values.len();
     if remain < sz {
