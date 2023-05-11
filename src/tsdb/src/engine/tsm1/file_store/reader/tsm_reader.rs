@@ -239,7 +239,8 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
         let inner = self.inner.read().await;
         let (_i, b) = inner.deref();
 
-        let block = b.read_block(&mut reader, entry).await?;
+        let mut block = vec![];
+        b.read_block(&mut reader, entry, &mut block).await?;
         values.decode(block.as_slice())?;
 
         Ok(())

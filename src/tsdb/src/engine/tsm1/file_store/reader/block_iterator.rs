@@ -1,4 +1,5 @@
 use std::fmt::Debug;
+use std::marker::PhantomData;
 
 use influxdb_common::iterator::AsyncIterator;
 use influxdb_storage::opendal::Reader;
@@ -10,7 +11,7 @@ use crate::engine::tsm1::file_store::reader::index_reader::TSMIndex;
 
 /// BlockIterator allows iterating over each block in a TSM file in order.  It provides
 /// raw access to the block bytes without decoding them.
-pub struct BlockIterator<'a, 'b, B, I, V>
+pub struct BlockIterator<'a, B, I, V>
 where
     B: TSMBlock,
     I: TSMIndex,
@@ -18,17 +19,20 @@ where
     TypeValues<V>: BlockDecoder,
 {
     key: &'a [u8],
+
     entries: IndexEntries,
+    i: usize,
 
-    r: Reader,
+    reader: Reader,
 
-    i: I,
-    b: B,
+    tsm_index: I,
+    tsm_block: B,
 
-    values: &'b mut TypeValues<V>,
+    block: Vec<u8>,
+    _p: PhantomData<V>,
 }
 
-impl<'a, 'b, B, I, V> BlockIterator<'a, 'b, B, I, V>
+impl<'a, B, I, V> BlockIterator<'a, B, I, V>
 where
     B: TSMBlock,
     I: TSMIndex,
@@ -37,39 +41,49 @@ where
 {
     pub async fn new(
         key: &'a [u8],
-        mut r: Reader,
-        i: I,
-        b: B,
-        values: &'b mut TypeValues<V>,
-    ) -> anyhow::Result<BlockIterator<'a, 'b, B, I, V>> {
+        mut reader: Reader,
+        tsm_index: I,
+        tsm_block: B,
+    ) -> anyhow::Result<BlockIterator<'a, B, I, V>> {
         let mut entries = IndexEntries::new(V::block_type());
-        i.entries(&mut r, key, &mut entries).await?;
+        tsm_index.entries(&mut reader, key, &mut entries).await?;
 
         Ok(Self {
             key,
             entries,
-            r,
-            i,
-            b,
-            values,
+            i: 0,
+            reader,
+            tsm_index,
+            tsm_block,
+            block: vec![],
+            _p: Default::default(),
         })
     }
 }
 
 #[async_trait]
-impl<'a, 'b, B, I, V> AsyncIterator for BlockIterator<'a, 'b, B, I, V>
+impl<'a, B, I, V> AsyncIterator for BlockIterator<'a, B, I, V>
 where
     B: TSMBlock,
     I: TSMIndex,
     V: TypeEncoder,
     TypeValues<V>: BlockDecoder,
 {
-    type Item = ();
+    type Item = TypeValues<V>;
 
     async fn try_next(&mut self) -> anyhow::Result<Option<Self::Item>> {
-        let ie = self.entries.entries[0].clone();
-        let block = self.b.read_block(&mut self.r, ie).await?;
-        self.values.decode(block.as_slice())?;
+        if self.entries.entries.len() == 0 || self.i >= self.entries.entries.len() {
+            return Ok(None);
+        }
+
+        let ie = self.entries.entries[self.i].clone();
+        self.i += 1;
+        self.tsm_block
+            .read_block(&mut self.reader, ie, &mut self.block)
+            .await?;
+
+        let mut values: TypeValues<V> = Vec::with_capacity(0);
+        values.decode(self.block.as_slice())?;
         Ok(None)
     }
 }

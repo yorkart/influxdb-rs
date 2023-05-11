@@ -10,7 +10,12 @@ use crate::engine::tsm1::file_store::index::IndexEntry;
 /// TSM file.
 #[async_trait]
 pub trait TSMBlock: Send + Sync {
-    async fn read_block(&self, reader: &mut Reader, entry: IndexEntry) -> anyhow::Result<Vec<u8>>;
+    async fn read_block(
+        &self,
+        reader: &mut Reader,
+        entry: IndexEntry,
+        buf: &mut Vec<u8>,
+    ) -> anyhow::Result<()>;
     async fn rename(&mut self, path: &str) -> anyhow::Result<()>;
     async fn close(&mut self) -> anyhow::Result<()>;
     async fn free(&self) -> anyhow::Result<()>;
@@ -116,8 +121,12 @@ impl TSMBlock for DefaultBlockAccessor {
     // }
 
     /// returns buf as Vec<u8>, buf[0] is crc,  buf[1..] is blocks
-    /// TODO 以流式返回，比如采用返回iterator方式进行
-    async fn read_block(&self, reader: &mut Reader, entry: IndexEntry) -> anyhow::Result<Vec<u8>> {
+    async fn read_block(
+        &self,
+        reader: &mut Reader,
+        entry: IndexEntry,
+        buf: &mut Vec<u8>,
+    ) -> anyhow::Result<()> {
         self.inc_access();
 
         if entry.offset + entry.size as u64 > self.max_offset {
@@ -128,14 +137,13 @@ impl TSMBlock for DefaultBlockAccessor {
 
         let _checksum = reader.read_u32().await?;
 
-        let mut buf = Vec::with_capacity(entry.size as usize - 4);
-        buf.resize(entry.size as usize, 0);
+        buf.resize(entry.size as usize - 4, 0);
         let n = reader.read(buf.as_mut_slice()).await?;
         if n != entry.size as usize {
             return Err(anyhow!("not enough entry were read"));
         }
 
-        Ok(buf)
+        Ok(())
     }
 
     async fn rename(&mut self, _path: &str) -> anyhow::Result<()> {
