@@ -286,7 +286,7 @@ impl IndirectIndex {
 
         let mut key_buf: Vec<u8> = vec![];
         while left < right {
-            let mid = left + size / 2;
+            let mid = (left + right) / 2;
 
             let cmp = {
                 let offset = offsets[mid];
@@ -603,7 +603,7 @@ impl TSMIndex for IndirectIndex {
         Ok(())
     }
 
-    // TODO optimization: 先读取完整entry集合，再时间过滤，复杂度较高
+    /// TODO optimization: 先读取完整entry集合，再时间过滤，复杂度较高
     async fn entry(
         &self,
         reader: &mut Reader,

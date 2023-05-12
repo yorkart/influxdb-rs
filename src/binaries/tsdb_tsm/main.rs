@@ -3,6 +3,7 @@ use std::str::from_utf8_unchecked;
 use clap::Parser;
 use influxdb_common::iterator::AsyncIterator;
 use influxdb_storage::StorageOperator;
+use influxdb_tsdb::engine::tsm1::file_store::index::IndexEntries;
 use influxdb_tsdb::engine::tsm1::file_store::reader::tsm_reader::new_default_tsm_reader;
 use influxdb_tsdb::engine::tsm1::file_store::reader::tsm_reader::TSMReader;
 use serde::Deserialize;
@@ -26,6 +27,13 @@ async fn main() -> anyhow::Result<()> {
 
     let op = StorageOperator::root(config.path.as_str())?;
     let tsm_reader = new_default_tsm_reader(op).await?;
+
+    let key = "cpu,host=serverB-99995,location=us-west#!~#value";
+    let typ = tsm_reader.block_type(key.as_bytes()).await?;
+    println!("{}", typ);
+
+    let mut ie = IndexEntries::new(typ);
+    tsm_reader.read_entries(key.as_bytes(), &mut ie).await?;
 
     let mut itr = tsm_reader.key_iterator().await?;
     let mut i = 0;

@@ -70,7 +70,7 @@ pub trait TSMReader: Sync + Send {
     /// Type returns the block type of the values stored for the key.  Returns one of
     /// BlockFloat64, BlockInt64, BlockBoolean, BlockString.  If key does not exist,
     /// an error is returned.
-    async fn block_type(&mut self, key: &[u8]) -> anyhow::Result<u8>;
+    async fn block_type(&self, key: &[u8]) -> anyhow::Result<u8>;
 
     /// batch_delete return a BatchDeleter that allows for multiple deletes in batches
     /// and group commit or rollback.
@@ -342,7 +342,7 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
         i.key_at(&mut reader, idx).await
     }
 
-    async fn block_type(&mut self, key: &[u8]) -> anyhow::Result<u8> {
+    async fn block_type(&self, key: &[u8]) -> anyhow::Result<u8> {
         let mut reader = self.op.reader().await?;
 
         let inner = self.inner.read().await;

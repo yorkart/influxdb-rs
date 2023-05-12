@@ -9,6 +9,17 @@ use crate::engine::tsm1::file_store::index::IndexEntries;
 use crate::engine::tsm1::file_store::reader::block_reader::TSMBlock;
 use crate::engine::tsm1::file_store::reader::index_reader::TSMIndex;
 
+pub struct BlockIteratorBuilder<B, I, V>
+where
+    B: TSMBlock,
+    I: TSMIndex,
+    V: TypeEncoder + Debug,
+    TypeValues<V>: BlockDecoder,
+{
+    tsm_index: I,
+    tsm_block: B,
+}
+
 /// BlockIterator allows iterating over each block in a TSM file in order.  It provides
 /// raw access to the block bytes without decoding them.
 pub struct BlockIterator<'a, B, I, V>
@@ -18,12 +29,10 @@ where
     V: TypeEncoder + Debug,
     TypeValues<V>: BlockDecoder,
 {
-    key: &'a [u8],
-
     entries: IndexEntries,
     i: usize,
 
-    reader: Reader,
+    reader: &'a mut Reader,
 
     tsm_index: I,
     tsm_block: B,
@@ -41,15 +50,14 @@ where
 {
     pub async fn new(
         key: &'a [u8],
-        mut reader: Reader,
+        reader: &'a mut Reader,
         tsm_index: I,
         tsm_block: B,
     ) -> anyhow::Result<BlockIterator<'a, B, I, V>> {
         let mut entries = IndexEntries::new(V::block_type());
-        tsm_index.entries(&mut reader, key, &mut entries).await?;
+        tsm_index.entries(reader, key, &mut entries).await?;
 
         Ok(Self {
-            key,
             entries,
             i: 0,
             reader,
