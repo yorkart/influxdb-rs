@@ -14,6 +14,14 @@ use crate::engine::tsm1::file_store::{KeyRange, TimeRange, INDEX_COUNT_SIZE, IND
 
 const NIL_OFFSET: u64 = u64::MAX;
 
+pub struct IndexHeader {
+    index_of_offset: usize,
+
+    key: Vec<u8>,
+    typ: u8,
+    count: u16,
+}
+
 /// TSMIndex represent the index section of a TSM file.  The index records all
 /// blocks, their locations, sizes, min and max times.
 #[async_trait]
@@ -36,16 +44,6 @@ pub trait TSMIndex: Send + Sync {
 
     /// contains return true if the given key exists in the index.
     async fn contains(&self, reader: &mut Reader, key: &[u8]) -> anyhow::Result<bool>;
-
-    /// contains_value returns true if key and time might exist in this file.  This function could
-    /// return true even though the actual point does not exists.  For example, the key may
-    /// exist in this file, but not have a point exactly at time t.
-    async fn contains_value(
-        &self,
-        reader: &mut Reader,
-        key: &[u8],
-        timestamp: i64,
-    ) -> anyhow::Result<bool>;
 
     /// entries reads the index entries for key into entries.
     async fn entries(
@@ -555,29 +553,6 @@ impl TSMIndex for IndirectIndex {
         let offsets = offsets.read().await;
         let offset_index = self.search_offset(reader, offsets.as_slice(), key).await?;
         Ok(offset_index.is_some())
-    }
-
-    async fn contains_value(
-        &self,
-        reader: &mut Reader,
-        key: &[u8],
-        timestamp: i64,
-    ) -> anyhow::Result<bool> {
-        let entry = self.entry(reader, key, timestamp).await?;
-        if entry.is_none() {
-            return Ok(false);
-        }
-
-        let tombstones = self.tombstones.read().await;
-        let tombstone = tombstones.get(key);
-        if let Some(tombstone) = tombstone {
-            for t in tombstone {
-                if t.min <= timestamp && t.max >= timestamp {
-                    return Ok(false);
-                }
-            }
-        }
-        Ok(true)
     }
 
     async fn entries(

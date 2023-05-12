@@ -33,19 +33,12 @@ pub trait TSMReader: Sync + Send {
     /// Entries returns the index entries for all blocks for the given key.
     async fn read_entries(&self, key: &[u8], entries: &mut IndexEntries) -> anyhow::Result<()>;
 
-    /// Returns true if the TSMFile may contain a value with the specified
-    /// key and time.
-    async fn contains_value(&mut self, key: &[u8], t: i64) -> anyhow::Result<bool>;
-
     /// contains returns true if the file contains any values for the given
     /// key.
     async fn contains(&mut self, key: &[u8]) -> anyhow::Result<bool>;
 
     /// overlaps_time_range returns true if the time range of the file intersect min and max.
     async fn overlaps_time_range(&mut self, min: i64, max: i64) -> bool;
-
-    /// overlaps_key_range returns true if the key range of the file intersects min and max.
-    async fn overlaps_key_range(&mut self, min: &[u8], max: &[u8]) -> bool;
 
     /// time_range returns the min and max time across all keys in the file.
     async fn time_range(&self) -> TimeRange;
@@ -95,10 +88,6 @@ pub trait TSMReader: Sync + Send {
     /// size returns the size of the file on disk in bytes.
     async fn size(&self) -> u32;
 
-    // /// rename renames the existing TSM file to a new name and replaces the mmap backing slice using the new
-    // /// file name. Index and Reader state are not re-initialized.
-    // async fn rename(&mut self, path: &str) -> anyhow::Result<()>;
-
     /// remove deletes the file from the filesystem.
     async fn remove(&mut self) -> anyhow::Result<()>;
 
@@ -120,6 +109,30 @@ pub trait TSMReader: Sync + Send {
 
 pub async fn new_default_tsm_reader(op: StorageOperator) -> anyhow::Result<impl TSMReader> {
     DefaultTSMReader::new(op).await
+}
+
+pub(crate) struct TSMReaderInner<I, B>
+where
+    I: TSMIndex,
+    B: TSMBlock,
+{
+    /// accessor provides access and decoding of blocks for the reader.
+    op: StorageOperator,
+
+    /// index is the index of all blocks.
+    index: I,
+    /// block is the value blocks.
+    block: B,
+}
+
+impl<I, B> TSMReaderInner<I, B>
+where
+    I: TSMIndex,
+    B: TSMBlock,
+{
+    pub fn new(op: StorageOperator, index: I, block: B) -> Self {
+        Self { op, index, block }
+    }
 }
 
 pub(crate) struct DefaultTSMReader<I, B>
@@ -255,15 +268,6 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
         i.entries(&mut reader, key, entries).await
     }
 
-    async fn contains_value(&mut self, key: &[u8], t: i64) -> anyhow::Result<bool> {
-        let mut reader = self.op.reader().await?;
-
-        let inner = self.inner.read().await;
-        let (i, _b) = inner.deref();
-
-        i.contains_value(&mut reader, key, t).await
-    }
-
     async fn contains(&mut self, key: &[u8]) -> anyhow::Result<bool> {
         let mut reader = self.op.reader().await?;
 
@@ -278,13 +282,6 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
         let (i, _b) = inner.deref();
 
         i.overlaps_time_range(min, max)
-    }
-
-    async fn overlaps_key_range(&mut self, min: &[u8], max: &[u8]) -> bool {
-        let inner = self.inner.read().await;
-        let (i, _b) = inner.deref();
-
-        i.overlaps_key_range(min, max)
     }
 
     async fn time_range(&self) -> TimeRange {
