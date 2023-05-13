@@ -93,7 +93,7 @@ pub trait TValues {
     fn merge(self, b: Self) -> Self;
 }
 
-pub trait BlockDecoder: Send {
+pub trait BlockDecoder: Send + Debug {
     fn decode(&mut self, block: &[u8]) -> anyhow::Result<()>;
 }
 

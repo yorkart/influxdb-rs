@@ -10,6 +10,7 @@ use tokio::sync::RwLock;
 use crate::engine::tsm1::encoding::BlockDecoder;
 use crate::engine::tsm1::file_store::index::{IndexEntries, IndexEntry};
 use crate::engine::tsm1::file_store::reader::batch_deleter::BatchDeleter;
+use crate::engine::tsm1::file_store::reader::block_iterator::AsyncIteratorBuilder;
 use crate::engine::tsm1::file_store::reader::block_reader::{DefaultBlockAccessor, TSMBlock};
 use crate::engine::tsm1::file_store::reader::index_reader::{IndirectIndex, KeyIterator, TSMIndex};
 use crate::engine::tsm1::file_store::stat::FileStat;
@@ -24,6 +25,10 @@ pub trait TSMReader: Sync + Send {
     /// path returns the underlying file path for the TSMFile.  If the file
     /// has not be written or loaded from disk, the zero value is returned.
     fn path(&self) -> &str;
+
+    async fn block_iterator_builder<B>(&self) -> anyhow::Result<B>
+    where
+        B: AsyncIteratorBuilder;
 
     async fn read_block_at<T>(&self, entry: IndexEntry, values: &mut T) -> anyhow::Result<()>
     where
@@ -251,6 +256,15 @@ impl DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
 impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
     fn path(&self) -> &str {
         self.op.path()
+    }
+
+    async fn block_iterator_builder<B>(&self) -> anyhow::Result<B>
+    where
+        B: AsyncIteratorBuilder,
+    {
+        // let op = self.op.reader().await?;
+        // Ok(BlockIteratorBuilder::new(op, self.inner.clone()))
+        todo!()
     }
 
     async fn read_block_at<T>(&self, entry: IndexEntry, values: &mut T) -> anyhow::Result<()>

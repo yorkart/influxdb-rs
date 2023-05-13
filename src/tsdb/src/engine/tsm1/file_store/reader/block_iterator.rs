@@ -1,25 +1,101 @@
 use std::fmt::Debug;
-use std::marker::PhantomData;
 
 use common_base::iterator::AsyncIterator;
 use influxdb_storage::opendal::Reader;
 
-use crate::engine::tsm1::encoding::{BlockDecoder, TypeEncoder, TypeValues};
+use crate::engine::tsm1::encoding::{BlockDecoder, TypeEncoder, TypeValues, Value};
 use crate::engine::tsm1::file_store::index::IndexEntries;
 use crate::engine::tsm1::file_store::reader::block_reader::TSMBlock;
 use crate::engine::tsm1::file_store::reader::index_reader::TSMIndex;
 use crate::engine::tsm1::file_store::reader::tsm_reader::ShareTSMReaderInner;
 
-pub struct BlockIteratorBuilder<B, I, V>
+#[async_trait]
+pub trait AsyncIteratorBuilder {
+    type Output<'a>
+    where
+        Self: 'a;
+
+    async fn build<'a, 'b: 'a>(&'a mut self, key: &'b [u8]) -> anyhow::Result<Self::Output<'a>>;
+}
+
+pub struct BlockIteratorBuilder<B, I>
 where
     B: TSMBlock,
     I: TSMIndex,
-    V: TypeEncoder + Debug,
-    TypeValues<V>: BlockDecoder,
 {
     reader: Reader,
     inner: ShareTSMReaderInner<I, B>,
-    _p: PhantomData<V>,
+}
+
+impl<B, I> BlockIteratorBuilder<B, I>
+where
+    B: TSMBlock,
+    I: TSMIndex,
+{
+    pub(crate) fn new(reader: Reader, inner: ShareTSMReaderInner<I, B>) -> Self {
+        Self { reader, inner }
+    }
+}
+
+#[async_trait]
+impl<B, I> AsyncIteratorBuilder for BlockIteratorBuilder<B, I>
+where
+    B: TSMBlock,
+    I: TSMIndex,
+{
+    type Output<'a> = TypeBlockIterator<'a, B, I>
+        where
+            Self: 'a;
+
+    async fn build<'a, 'b: 'a>(&'a mut self, key: &'b [u8]) -> anyhow::Result<Self::Output<'a>> {
+        let mut entries = IndexEntries::default();
+        self.inner
+            .index()
+            .entries(&mut self.reader, key, &mut entries)
+            .await?;
+
+        match entries.typ {
+            0 => {
+                let itr = BlockIterator::new(entries, &mut self.reader, self.inner.clone()).await?;
+                Ok(TypeBlockIterator::Float(itr))
+            }
+            1 => {
+                let itr = BlockIterator::new(entries, &mut self.reader, self.inner.clone()).await?;
+                Ok(TypeBlockIterator::Integer(itr))
+            }
+            2 => {
+                let itr = BlockIterator::new(entries, &mut self.reader, self.inner.clone()).await?;
+                Ok(TypeBlockIterator::Bool(itr))
+            }
+            3 => {
+                let itr = BlockIterator::new(entries, &mut self.reader, self.inner.clone()).await?;
+                Ok(TypeBlockIterator::String(itr))
+            }
+            4 => {
+                let itr = BlockIterator::new(entries, &mut self.reader, self.inner.clone()).await?;
+                Ok(TypeBlockIterator::Unsigned(itr))
+            }
+            // 1 => BlockIterator::new(entries, &mut self.reader, self.inner.clone()).await,
+            // 2 => BlockIterator::new(entries, &mut self.reader, self.inner.clone()).await,
+            // 3 => BlockIterator::new(entries, &mut self.reader, self.inner.clone()).await,
+            // 4 => BlockIterator::new(entries, &mut self.reader, self.inner.clone()).await,
+            _ => Err(anyhow!("")),
+        }
+
+        // BlockIterator::new(entries, &mut self.reader, self.inner.clone()).await
+    }
+}
+
+pub enum TypeBlockIterator<'a, B, I>
+where
+    B: TSMBlock,
+    I: TSMIndex,
+{
+    Float(BlockIterator<'a, B, I, f64>),
+    Integer(BlockIterator<'a, B, I, i64>),
+    Bool(BlockIterator<'a, B, I, bool>),
+    String(BlockIterator<'a, B, I, Vec<u8>>),
+    Unsigned(BlockIterator<'a, B, I, u64>),
 }
 
 /// BlockIterator allows iterating over each block in a TSM file in order.  It provides
@@ -28,7 +104,8 @@ pub struct BlockIterator<'a, B, I, V>
 where
     B: TSMBlock,
     I: TSMIndex,
-    V: TypeEncoder + Debug,
+    V: Debug + Clone + PartialOrd + PartialEq,
+    Value<V>: TypeEncoder,
     TypeValues<V>: BlockDecoder,
 {
     entries: IndexEntries,
@@ -38,31 +115,31 @@ where
     inner: ShareTSMReaderInner<I, B>,
 
     block: Vec<u8>,
-    _p: PhantomData<V>,
+    values: TypeValues<V>,
+    // _p: PhantomData<V>,
 }
 
 impl<'a, B, I, V> BlockIterator<'a, B, I, V>
 where
     B: TSMBlock,
     I: TSMIndex,
-    V: TypeEncoder,
+    V: Debug + Clone + PartialOrd + PartialEq,
+    Value<V>: TypeEncoder,
     TypeValues<V>: BlockDecoder,
 {
     pub(crate) async fn new(
-        key: &'a [u8],
+        entries: IndexEntries,
         reader: &'a mut Reader,
         inner: ShareTSMReaderInner<I, B>,
     ) -> anyhow::Result<BlockIterator<'a, B, I, V>> {
-        let mut entries = IndexEntries::new(V::block_type());
-        inner.index().entries(reader, key, &mut entries).await?;
-
         Ok(Self {
             entries,
             i: 0,
             reader,
             inner,
             block: vec![],
-            _p: Default::default(),
+            values: vec![],
+            // _p: PhantomData,
         })
     }
 }
@@ -72,7 +149,8 @@ impl<'a, B, I, V> AsyncIterator for BlockIterator<'a, B, I, V>
 where
     B: TSMBlock,
     I: TSMIndex,
-    V: TypeEncoder,
+    V: Debug + Clone + PartialOrd + PartialEq,
+    Value<V>: TypeEncoder,
     TypeValues<V>: BlockDecoder,
 {
     type Item = TypeValues<V>;
