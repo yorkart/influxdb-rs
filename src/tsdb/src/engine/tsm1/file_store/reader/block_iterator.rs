@@ -1,4 +1,5 @@
 use std::fmt::Debug;
+use std::marker::PhantomData;
 
 use common_base::iterator::AsyncIterator;
 use influxdb_storage::opendal::Reader;
@@ -18,32 +19,47 @@ pub trait AsyncIteratorBuilder {
     async fn build<'a, 'b: 'a>(&'a mut self, key: &'b [u8]) -> anyhow::Result<Self::Output<'a>>;
 }
 
-pub struct BlockIteratorBuilder<B, I>
+pub struct BlockIteratorBuilder<B, I, V>
 where
     B: TSMBlock,
     I: TSMIndex,
+    V: Debug + Send + Clone + PartialOrd + PartialEq,
+    Value<V>: TypeEncoder,
+    TypeValues<V>: BlockDecoder,
 {
     reader: Reader,
     inner: ShareTSMReaderInner<I, B>,
+
+    _p: PhantomData<V>,
 }
 
-impl<B, I> BlockIteratorBuilder<B, I>
+impl<B, I, V> BlockIteratorBuilder<B, I, V>
 where
     B: TSMBlock,
     I: TSMIndex,
+    V: Debug + Send + Clone + PartialOrd + PartialEq,
+    Value<V>: TypeEncoder,
+    TypeValues<V>: BlockDecoder,
 {
     pub(crate) fn new(reader: Reader, inner: ShareTSMReaderInner<I, B>) -> Self {
-        Self { reader, inner }
+        Self {
+            reader,
+            inner,
+            _p: Default::default(),
+        }
     }
 }
 
 #[async_trait]
-impl<B, I> AsyncIteratorBuilder for BlockIteratorBuilder<B, I>
+impl<B, I, V> AsyncIteratorBuilder for BlockIteratorBuilder<B, I, V>
 where
     B: TSMBlock,
     I: TSMIndex,
+    V: Debug + Send + Clone + PartialOrd + PartialEq,
+    Value<V>: TypeEncoder,
+    TypeValues<V>: BlockDecoder,
 {
-    type Output<'a> = TypeBlockIterator<'a, B, I>
+    type Output<'a> = BlockIterator<'a, B, I, V>
         where
             Self: 'a;
 
@@ -54,35 +70,9 @@ where
             .entries(&mut self.reader, key, &mut entries)
             .await?;
 
-        match entries.typ {
-            0 => {
-                let itr = BlockIterator::new(entries, &mut self.reader, self.inner.clone()).await?;
-                Ok(TypeBlockIterator::Float(itr))
-            }
-            1 => {
-                let itr = BlockIterator::new(entries, &mut self.reader, self.inner.clone()).await?;
-                Ok(TypeBlockIterator::Integer(itr))
-            }
-            2 => {
-                let itr = BlockIterator::new(entries, &mut self.reader, self.inner.clone()).await?;
-                Ok(TypeBlockIterator::Bool(itr))
-            }
-            3 => {
-                let itr = BlockIterator::new(entries, &mut self.reader, self.inner.clone()).await?;
-                Ok(TypeBlockIterator::String(itr))
-            }
-            4 => {
-                let itr = BlockIterator::new(entries, &mut self.reader, self.inner.clone()).await?;
-                Ok(TypeBlockIterator::Unsigned(itr))
-            }
-            // 1 => BlockIterator::new(entries, &mut self.reader, self.inner.clone()).await,
-            // 2 => BlockIterator::new(entries, &mut self.reader, self.inner.clone()).await,
-            // 3 => BlockIterator::new(entries, &mut self.reader, self.inner.clone()).await,
-            // 4 => BlockIterator::new(entries, &mut self.reader, self.inner.clone()).await,
-            _ => Err(anyhow!("")),
-        }
-
-        // BlockIterator::new(entries, &mut self.reader, self.inner.clone()).await
+        let itr: BlockIterator<'a, B, I, V> =
+            BlockIterator::new(entries, &mut self.reader, self.inner.clone()).await?;
+        Ok(itr)
     }
 }
 
@@ -104,7 +94,7 @@ pub struct BlockIterator<'a, B, I, V>
 where
     B: TSMBlock,
     I: TSMIndex,
-    V: Debug + Clone + PartialOrd + PartialEq,
+    V: Debug + Send + Clone + PartialOrd + PartialEq,
     Value<V>: TypeEncoder,
     TypeValues<V>: BlockDecoder,
 {
@@ -116,14 +106,13 @@ where
 
     block: Vec<u8>,
     values: TypeValues<V>,
-    // _p: PhantomData<V>,
 }
 
 impl<'a, B, I, V> BlockIterator<'a, B, I, V>
 where
     B: TSMBlock,
     I: TSMIndex,
-    V: Debug + Clone + PartialOrd + PartialEq,
+    V: Debug + Send + Clone + PartialOrd + PartialEq,
     Value<V>: TypeEncoder,
     TypeValues<V>: BlockDecoder,
 {
@@ -149,7 +138,7 @@ impl<'a, B, I, V> AsyncIterator for BlockIterator<'a, B, I, V>
 where
     B: TSMBlock,
     I: TSMIndex,
-    V: Debug + Clone + PartialOrd + PartialEq,
+    V: Debug + Send + Clone + PartialOrd + PartialEq,
     Value<V>: TypeEncoder,
     TypeValues<V>: BlockDecoder,
 {

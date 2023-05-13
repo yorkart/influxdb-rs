@@ -202,7 +202,7 @@ fn decode_block_using<T>(
     values: &mut Vec<Value<T>>,
 ) -> anyhow::Result<()>
 where
-    T: Debug + Clone + PartialOrd + PartialEq,
+    T: Debug + Send + Clone + PartialOrd + PartialEq,
     Value<T>: TypeEncoder,
 {
     let remain = values.capacity() - values.len();

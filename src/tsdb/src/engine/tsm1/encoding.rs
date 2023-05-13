@@ -11,7 +11,7 @@ use crate::engine::tsm1::block::{
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct Value<T>
 where
-    T: Debug + Clone + PartialOrd + PartialEq,
+    T: Debug + Send + Clone + PartialOrd + PartialEq,
 {
     pub unix_nano: i64,
     pub value: T,
@@ -19,7 +19,7 @@ where
 
 impl<T> Value<T>
 where
-    T: Debug + Clone + PartialOrd + PartialEq,
+    T: Debug + Send + Clone + PartialOrd + PartialEq,
 {
     pub fn new(unix_nano: i64, value: T) -> Self {
         Self { unix_nano, value }
@@ -101,7 +101,7 @@ pub type TypeValues<T> = Vec<Value<T>>;
 
 impl<T> TValues for TypeValues<T>
 where
-    T: Debug + Clone + PartialOrd + PartialEq,
+    T: Debug + Send + Clone + PartialOrd + PartialEq,
     Value<T>: TypeEncoder,
 {
     fn min_time(&self) -> i64 {
@@ -459,7 +459,7 @@ impl TValues for Values {
 /// to determine if the value v exists.
 fn search<T>(values: &[Value<T>], v: i64) -> usize
 where
-    T: Debug + Clone + PartialOrd + PartialEq,
+    T: Debug + Send + Clone + PartialOrd + PartialEq,
 {
     // Define: f(x) → a[x].UnixNano() < v
     // Define: f(-1) == true, f(n) == false

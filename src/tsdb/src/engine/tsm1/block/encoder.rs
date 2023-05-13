@@ -60,7 +60,7 @@ fn encode_block_using<T>(
     mut v_enc: impl Encoder<T>,
 ) -> anyhow::Result<()>
 where
-    T: Debug + Clone + PartialOrd + PartialEq,
+    T: Debug + Send + Clone + PartialOrd + PartialEq,
 {
     if values.len() == 0 {
         return Err(anyhow!("encode_float_block: no data found"));
