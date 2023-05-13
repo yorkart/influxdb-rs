@@ -1,14 +1,14 @@
 [package]
-name = "influxdb-common"
+name = "common-base"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "influxdb_common"
+name = "common_base"
 
 [dependencies.influxdb-utils]
 version = "0.1.0"
-path = "../utils"
+path = "../../utils"
 
 [dependencies]
 anyhow = "1.0"

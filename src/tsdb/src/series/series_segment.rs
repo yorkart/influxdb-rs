@@ -2,7 +2,7 @@ use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, SeekFrom};
 
 use bytes::Buf;
-use influxdb_common::iterator::AsyncIterator;
+use common_base::iterator::AsyncIterator;
 use influxdb_storage::opendal::Reader;
 use influxdb_storage::opendal::Writer;
 use influxdb_storage::StorageOperator;

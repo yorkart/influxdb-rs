@@ -1,5 +1,5 @@
+use common_base::iterator::{AsyncIterator, AsyncIterators};
 use futures::TryStreamExt;
-use influxdb_common::iterator::{AsyncIterator, AsyncIterators};
 use influxdb_storage::{path_join, StorageOperator};
 use tokio::sync::RwLock;
 

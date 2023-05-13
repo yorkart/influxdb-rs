@@ -3,9 +3,9 @@ name = "influxdb-binaries"
 version = "0.1.0"
 edition = "2021"
 
-[dependencies.influxdb-common]
+[dependencies.common-base]
 version = "0.1.0"
-path = "../common"
+path = "../common/base"
 
 [dependencies.influxdb-tsdb]
 version = "0.1.0"
