@@ -16,8 +16,6 @@ pub trait TSMBlock: Send + Sync {
         entry: IndexEntry,
         buf: &mut Vec<u8>,
     ) -> anyhow::Result<()>;
-    async fn rename(&mut self, path: &str) -> anyhow::Result<()>;
-    async fn close(&mut self) -> anyhow::Result<()>;
     async fn free(&self) -> anyhow::Result<()>;
 }
 
@@ -45,81 +43,10 @@ impl DefaultBlockAccessor {
     fn inc_access(&self) {
         self.access_count.fetch_add(1, Ordering::Relaxed);
     }
-
-    // async fn read_block(&self, reader: &mut Reader, entry: IndexEntry) -> anyhow::Result<Vec<u8>> {
-    //     self.inc_access();
-    //
-    //     if entry.offset + entry.size as u64 > self.max_offset {
-    //         return Err(anyhow!("tsm file closed"));
-    //     }
-    //
-    //     reader.seek(SeekFrom::Start(entry.offset)).await?;
-    //
-    //     let _checksum = reader.read_u32().await?;
-    //
-    //     let mut buf = Vec::with_capacity(entry.size as usize - 4);
-    //     buf.resize(entry.size as usize, 0);
-    //     let n = reader.read(buf.as_mut_slice()).await?;
-    //     if n != entry.size as usize {
-    //         return Err(anyhow!("not enough entry were read"));
-    //     }
-    //
-    //     Ok(buf)
-    // }
 }
 
 #[async_trait]
 impl TSMBlock for DefaultBlockAccessor {
-    // async fn read_float_block(
-    //     &self,
-    //     reader: &mut Reader,
-    //     entry: IndexEntry,
-    //     values: &mut FloatValues,
-    // ) -> anyhow::Result<()> {
-    //     let buf = self.read_block(reader, entry).await?;
-    //     decode_float_block(buf.as_slice(), values)
-    // }
-    //
-    // async fn read_integer_block(
-    //     &self,
-    //     reader: &mut Reader,
-    //     entry: IndexEntry,
-    //     values: &mut IntegerValues,
-    // ) -> anyhow::Result<()> {
-    //     let buf = self.read_block(reader, entry).await?;
-    //     decode_integer_block(buf.as_slice(), values)
-    // }
-    //
-    // async fn read_unsigned_block(
-    //     &self,
-    //     reader: &mut Reader,
-    //     entry: IndexEntry,
-    //     values: &mut UnsignedValues,
-    // ) -> anyhow::Result<()> {
-    //     let buf = self.read_block(reader, entry).await?;
-    //     decode_unsigned_block(buf.as_slice(), values)
-    // }
-    //
-    // async fn read_string_block(
-    //     &self,
-    //     reader: &mut Reader,
-    //     entry: IndexEntry,
-    //     values: &mut StringValues,
-    // ) -> anyhow::Result<()> {
-    //     let buf = self.read_block(reader, entry).await?;
-    //     decode_string_block(buf.as_slice(), values)
-    // }
-    //
-    // async fn read_boolean_block(
-    //     &self,
-    //     reader: &mut Reader,
-    //     entry: IndexEntry,
-    //     values: &mut BooleanValues,
-    // ) -> anyhow::Result<()> {
-    //     let buf = self.read_block(reader, entry).await?;
-    //     decode_bool_block(buf.as_slice(), values)
-    // }
-
     /// returns buf as Vec<u8>, buf[0] is crc,  buf[1..] is blocks
     async fn read_block(
         &self,
@@ -143,14 +70,6 @@ impl TSMBlock for DefaultBlockAccessor {
             return Err(anyhow!("not enough entry were read"));
         }
 
-        Ok(())
-    }
-
-    async fn rename(&mut self, _path: &str) -> anyhow::Result<()> {
-        todo!()
-    }
-
-    async fn close(&mut self) -> anyhow::Result<()> {
         Ok(())
     }
 

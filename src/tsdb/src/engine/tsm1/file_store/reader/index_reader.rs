@@ -4,7 +4,7 @@ use std::io;
 use std::io::{ErrorKind, SeekFrom};
 use std::sync::Arc;
 
-use influxdb_common::iterator::AsyncIterator;
+use common_base::iterator::AsyncIterator;
 use influxdb_storage::opendal::Reader;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::RwLock;
@@ -107,9 +107,6 @@ pub trait TSMIndex: Send + Sync {
     /// BlockFloat64, BlockInt64, BlockBool, BlockString.  If key does not exist,
     /// an error is returned.
     async fn block_type(&self, reader: &mut Reader, key: &[u8]) -> anyhow::Result<u8>;
-
-    /// close closes the index and releases any resources.
-    async fn close(&mut self) -> anyhow::Result<()>;
 }
 
 pub struct KeyIterator {
@@ -704,10 +701,6 @@ impl TSMIndex for IndirectIndex {
         reader.seek(SeekFrom::Start(offset + n as u64)).await?;
         let typ = reader.read_u8().await?;
         Ok(typ)
-    }
-
-    async fn close(&mut self) -> anyhow::Result<()> {
-        Ok(())
     }
 }
 

@@ -1,5 +1,4 @@
 use std::io::SeekFrom;
-use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -116,9 +115,6 @@ where
     I: TSMIndex,
     B: TSMBlock,
 {
-    /// accessor provides access and decoding of blocks for the reader.
-    op: StorageOperator,
-
     /// index is the index of all blocks.
     index: I,
     /// block is the value blocks.
@@ -130,10 +126,24 @@ where
     I: TSMIndex,
     B: TSMBlock,
 {
-    pub fn new(op: StorageOperator, index: I, block: B) -> Self {
-        Self { op, index, block }
+    pub fn new(index: I, block: B) -> Self {
+        Self { index, block }
+    }
+
+    pub fn block(&self) -> &B {
+        &self.block
+    }
+
+    pub fn index(&self) -> &I {
+        &self.index
+    }
+
+    pub async fn close(&mut self) -> anyhow::Result<()> {
+        Ok(())
     }
 }
+
+pub(crate) type ShareTSMReaderInner<I, B> = Arc<TSMReaderInner<I, B>>;
 
 pub(crate) struct DefaultTSMReader<I, B>
 where
@@ -147,7 +157,7 @@ where
     op: StorageOperator,
 
     /// index is the index of all blocks.
-    inner: Arc<RwLock<(I, B)>>,
+    inner: ShareTSMReaderInner<I, B>,
 
     /// tombstoner ensures tombstoned keys are not available by the index.
     tombstoner: RwLock<Tombstoner<IndexTombstonerFilter<I, B>>>,
@@ -190,15 +200,15 @@ impl DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
         )
         .await?;
         let block = DefaultBlockAccessor::new(index_start).await?;
-        let reader = Arc::new(RwLock::new((index, block)));
+        let inner = Arc::new(TSMReaderInner::new(index, block));
 
         let tombstoner =
-            Tombstoner::new(op.clone(), IndexTombstonerFilter::new(reader.clone())).await?;
+            Tombstoner::new(op.clone(), IndexTombstonerFilter::new(inner.clone())).await?;
 
         Ok(Self {
             refs: Default::default(),
             op,
-            inner: reader.clone(),
+            inner,
             tombstoner: RwLock::new(tombstoner),
             size: 0,
             last_modified: 0,
@@ -249,11 +259,11 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
     {
         let mut reader = self.op.reader().await?;
 
-        let inner = self.inner.read().await;
-        let (_i, b) = inner.deref();
-
         let mut block = vec![];
-        b.read_block(&mut reader, entry, &mut block).await?;
+        self.inner
+            .block()
+            .read_block(&mut reader, entry, &mut block)
+            .await?;
         values.decode(block.as_slice())?;
 
         Ok(())
@@ -261,91 +271,52 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
 
     async fn read_entries(&self, key: &[u8], entries: &mut IndexEntries) -> anyhow::Result<()> {
         let mut reader = self.op.reader().await?;
-
-        let inner = self.inner.read().await;
-        let (i, _b) = inner.deref();
-
-        i.entries(&mut reader, key, entries).await
+        self.inner.index().entries(&mut reader, key, entries).await
     }
 
     async fn contains(&mut self, key: &[u8]) -> anyhow::Result<bool> {
         let mut reader = self.op.reader().await?;
-
-        let inner = self.inner.read().await;
-        let (i, _b) = inner.deref();
-
-        i.contains(&mut reader, key).await
+        self.inner.index().contains(&mut reader, key).await
     }
 
     async fn overlaps_time_range(&mut self, min: i64, max: i64) -> bool {
-        let inner = self.inner.read().await;
-        let (i, _b) = inner.deref();
-
-        i.overlaps_time_range(min, max)
+        self.inner.index().overlaps_time_range(min, max)
     }
 
     async fn time_range(&self) -> TimeRange {
-        let inner = self.inner.read().await;
-        let (i, _b) = inner.deref();
-
-        i.time_range()
+        self.inner.index().time_range()
     }
 
     async fn tombstone_range(&self, key: &[u8]) -> Vec<TimeRange> {
-        let inner = self.inner.read().await;
-        let (i, _b) = inner.deref();
-
-        i.tombstone_range(key).await
+        self.inner.index().tombstone_range(key).await
     }
 
     async fn key_range(&self) -> KeyRange {
-        let inner = self.inner.read().await;
-        let (i, _b) = inner.deref();
-
-        i.key_range()
+        self.inner.index().key_range()
     }
 
     async fn key_count(&self) -> usize {
-        let inner = self.inner.read().await;
-        let (i, _b) = inner.deref();
-
-        i.key_count().await
+        self.inner.index().key_count().await
     }
 
     async fn key_iterator(&self) -> anyhow::Result<KeyIterator> {
         let reader = self.op.reader().await?;
-
-        let inner = self.inner.read().await;
-        let (i, _b) = inner.deref();
-
-        i.key_iterator(reader).await
+        self.inner.index().key_iterator(reader).await
     }
 
     async fn seek(&mut self, key: &[u8]) -> anyhow::Result<u64> {
         let mut reader = self.op.reader().await?;
-
-        let inner = self.inner.read().await;
-        let (i, _b) = inner.deref();
-
-        i.seek(&mut reader, key).await
+        self.inner.index().seek(&mut reader, key).await
     }
 
     async fn key_at(&mut self, idx: usize) -> anyhow::Result<Option<(Vec<u8>, u8)>> {
         let mut reader = self.op.reader().await?;
-
-        let inner = self.inner.read().await;
-        let (i, _b) = inner.deref();
-
-        i.key_at(&mut reader, idx).await
+        self.inner.index().key_at(&mut reader, idx).await
     }
 
     async fn block_type(&self, key: &[u8]) -> anyhow::Result<u8> {
         let mut reader = self.op.reader().await?;
-
-        let inner = self.inner.read().await;
-        let (i, _b) = inner.deref();
-
-        i.block_type(&mut reader, key).await
+        self.inner.index().block_type(&mut reader, key).await
     }
 
     async fn batch_delete(&mut self) -> Box<dyn BatchDeleter> {
@@ -354,20 +325,15 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
 
     async fn delete(&self, keys: &mut [&[u8]]) -> anyhow::Result<()> {
         let mut reader = self.op.reader().await?;
-
-        let inner = self.inner.read().await;
-        let (i, _b) = inner.deref();
-
-        i.delete(&mut reader, keys).await
+        self.inner.index().delete(&mut reader, keys).await
     }
 
     async fn delete_range(&self, keys: &mut [&[u8]], min: i64, max: i64) -> anyhow::Result<()> {
         let mut reader = self.op.reader().await?;
-
-        let inner = self.inner.read().await;
-        let (i, _b) = inner.deref();
-
-        i.delete_range(&mut reader, keys, min, max).await
+        self.inner
+            .index()
+            .delete_range(&mut reader, keys, min, max)
+            .await
     }
 
     async fn has_tombstones(&self) -> anyhow::Result<bool> {
@@ -381,10 +347,7 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
     }
 
     async fn close(&mut self) -> anyhow::Result<()> {
-        let mut inner = self.inner.write().await;
-        let (i, b) = inner.deref_mut();
-        i.close().await?;
-        b.close().await
+        Ok(())
     }
 
     async fn size(&self) -> u32 {
@@ -392,14 +355,8 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
     }
 
     async fn remove(&mut self) -> anyhow::Result<()> {
-        {
-            let mut inner = self.inner.write().await;
-            let (i, b) = inner.deref_mut();
-            i.close().await?;
-            b.close().await?;
+        self.op.delete().await?;
 
-            self.op.delete().await?;
-        }
         {
             let tombstoner = self.tombstoner.write().await;
             tombstoner.delete().await?;
@@ -420,8 +377,7 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
     }
 
     async fn stats(&self) -> anyhow::Result<FileStat> {
-        let inner = self.inner.read().await;
-        let (i, _b) = inner.deref();
+        let i = self.inner.index();
 
         let time_range = i.time_range();
         let key_range = i.key_range();
@@ -439,9 +395,6 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
     }
 
     async fn free(&mut self) -> anyhow::Result<()> {
-        let inner = self.inner.read().await;
-        let (_i, b) = inner.deref();
-
-        b.free().await
+        self.inner.block().free().await
     }
 }

@@ -1,13 +1,14 @@
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
-use influxdb_common::iterator::AsyncIterator;
+use common_base::iterator::AsyncIterator;
 use influxdb_storage::opendal::Reader;
 
 use crate::engine::tsm1::encoding::{BlockDecoder, TypeEncoder, TypeValues};
 use crate::engine::tsm1::file_store::index::IndexEntries;
 use crate::engine::tsm1::file_store::reader::block_reader::TSMBlock;
 use crate::engine::tsm1::file_store::reader::index_reader::TSMIndex;
+use crate::engine::tsm1::file_store::reader::tsm_reader::ShareTSMReaderInner;
 
 pub struct BlockIteratorBuilder<B, I, V>
 where
@@ -16,8 +17,9 @@ where
     V: TypeEncoder + Debug,
     TypeValues<V>: BlockDecoder,
 {
-    tsm_index: I,
-    tsm_block: B,
+    reader: Reader,
+    inner: ShareTSMReaderInner<I, B>,
+    _p: PhantomData<V>,
 }
 
 /// BlockIterator allows iterating over each block in a TSM file in order.  It provides
@@ -33,9 +35,7 @@ where
     i: usize,
 
     reader: &'a mut Reader,
-
-    tsm_index: I,
-    tsm_block: B,
+    inner: ShareTSMReaderInner<I, B>,
 
     block: Vec<u8>,
     _p: PhantomData<V>,
@@ -48,21 +48,19 @@ where
     V: TypeEncoder,
     TypeValues<V>: BlockDecoder,
 {
-    pub async fn new(
+    pub(crate) async fn new(
         key: &'a [u8],
         reader: &'a mut Reader,
-        tsm_index: I,
-        tsm_block: B,
+        inner: ShareTSMReaderInner<I, B>,
     ) -> anyhow::Result<BlockIterator<'a, B, I, V>> {
         let mut entries = IndexEntries::new(V::block_type());
-        tsm_index.entries(reader, key, &mut entries).await?;
+        inner.index().entries(reader, key, &mut entries).await?;
 
         Ok(Self {
             entries,
             i: 0,
             reader,
-            tsm_index,
-            tsm_block,
+            inner,
             block: vec![],
             _p: Default::default(),
         })
@@ -86,7 +84,8 @@ where
 
         let ie = self.entries.entries[self.i].clone();
         self.i += 1;
-        self.tsm_block
+        self.inner
+            .block()
             .read_block(&mut self.reader, ie, &mut self.block)
             .await?;
 
