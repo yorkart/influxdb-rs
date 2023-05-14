@@ -243,18 +243,18 @@ impl SeriesSegment {
 
     /// write_log_entry writes entry data into the segment.
     /// Returns the offset of the beginning of the entry.
-    pub async fn write_log_entry(&mut self, entry: &SeriesEntry) -> anyhow::Result<u64> {
+    pub async fn write_log_entry(&mut self, entry: &SeriesEntry) -> anyhow::Result<SeriesOffset> {
         if !self.can_write(entry) {
             return Err(anyhow!("series segment not writable"));
         }
 
-        let offset = join_series_offset(self.segment_id, self.write_offset);
+        let series_offset = SeriesOffset::join(self.segment_id, self.write_offset);
 
         let writer = self.writer.as_mut().unwrap();
         entry.write_to(writer).await?;
         self.write_offset += entry.len() as u32;
 
-        Ok(offset)
+        Ok(series_offset)
     }
 
     pub fn can_write(&self, entry: &SeriesEntry) -> bool {
@@ -380,7 +380,8 @@ pub fn series_segment_size(id: u16) -> u32 {
     1 << shift
 }
 
-pub struct SeriesOffset(u64);
+#[derive(Copy, Clone, Debug, Default, PartialEq, PartialOrd)]
+pub struct SeriesOffset(pub u64);
 
 impl SeriesOffset {
     pub fn join(segment_id: u16, pos: u32) -> Self {

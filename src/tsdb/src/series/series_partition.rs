@@ -6,7 +6,7 @@ use tokio::sync::RwLock;
 use crate::series::series_file::SERIES_FILE_PARTITION_N;
 use crate::series::series_index::SeriesIndex;
 use crate::series::series_segment::{
-    parse_series_segment_filename, split_series_offset, SeriesEntry, SeriesEntryFlag, SeriesSegment,
+    parse_series_segment_filename, SeriesEntry, SeriesEntryFlag, SeriesOffset, SeriesSegment,
 };
 
 /// DEFAULT_SERIES_PARTITION_COMPACT_THRESHOLD is the number of series IDs to hold in the in-memory
@@ -15,11 +15,11 @@ const DEFAULT_SERIES_PARTITION_COMPACT_THRESHOLD: usize = 1 << 17; // 128K
 
 struct KeyRange {
     entry: SeriesEntry,
-    offset: u64,
+    offset: SeriesOffset,
 }
 
 impl KeyRange {
-    pub fn new(entry: SeriesEntry, offset: u64) -> Self {
+    pub fn new(entry: SeriesEntry, offset: SeriesOffset) -> Self {
         Self { entry, offset }
     }
 }
@@ -149,7 +149,7 @@ impl SeriesPartitionInner {
 
     /// writeLogEntry appends an entry to the end of the active segment.
     /// If there is no more room in the segment then a new segment is added.
-    async fn write_log_entry(&mut self, entry: &SeriesEntry) -> anyhow::Result<u64> {
+    async fn write_log_entry(&mut self, entry: &SeriesEntry) -> anyhow::Result<SeriesOffset> {
         let mut segment = self.active_segment_mut();
         if !segment.can_write(&entry) {
             self.create_segment().await?;
@@ -202,17 +202,18 @@ impl SeriesPartitionInner {
     }
 
     /// series_key returns the series key for a given id.
-    pub async fn series_key(&self, id: u64) -> anyhow::Result<Vec<u8>> {
-        let offset = self.index.find_offset_by_id(id).await?;
-        self.series_key_by_offset(offset).await
+    pub async fn series_key(&self, id: u64) -> anyhow::Result<Option<Vec<u8>>> {
+        let series_offset = self.index.find_offset_by_id(id).await?;
+        if let Some(series_offset) = series_offset {
+            let v = self.series_key_by_offset(series_offset).await?;
+            Ok(Some(v))
+        } else {
+            Ok(None)
+        }
     }
 
-    async fn series_key_by_offset(&self, offset: u64) -> anyhow::Result<Vec<u8>> {
-        if offset == 0 {
-            return Ok(vec![]);
-        }
-
-        let (segment_id, pos) = split_series_offset(offset);
+    async fn series_key_by_offset(&self, series_offset: SeriesOffset) -> anyhow::Result<Vec<u8>> {
+        let (segment_id, pos) = series_offset.split();
         for segment in &self.segments {
             if segment.id() != segment_id {
                 continue;
