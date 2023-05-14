@@ -16,16 +16,16 @@ const SERIES_INDEX_MAGIC: &'static str = "SIDX";
 
 /// offset + id
 const SERIES_INDEX_ELEM_SIZE: u32 = 16;
-/// rhh load factor
-const SERIES_INDEX_LOAD_FACTOR: u32 = 90;
+// /// rhh load factor
+// const SERIES_INDEX_LOAD_FACTOR: u32 = 90;
 
-const SERIES_INDEX_HEADER_SIZE: u32 = 0 +
-    4 + 1 + // magic + version
-    8 + 8 + // max series + max offset
-    8 + 8 + // count + capacity
-    8 + 8 + // key/id map offset & size
-    8 + 8 + // id/offset map offset & size
-    0;
+// const SERIES_INDEX_HEADER_SIZE: u32 = 0 +
+//     4 + 1 + // magic + version
+//     8 + 8 + // max series + max offset
+//     8 + 8 + // count + capacity
+//     8 + 8 + // key/id map offset & size
+//     8 + 8 + // id/offset map offset & size
+//     0;
 
 ///SeriesIndexHeader represents the header of a series index.
 #[derive(Default)]

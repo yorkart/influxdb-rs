@@ -122,21 +122,19 @@ impl SeriesEntry {
 /// SeriesSegmentHeader represents the header of a series segment.
 pub struct SeriesSegmentHeader {
     version: u8,
-    crc: u32,
+    // crc: u32,
 }
 
 impl SeriesSegmentHeader {
     pub fn new() -> Self {
         Self {
             version: SERIES_SEGMENT_VERSION,
-            crc: 0,
         }
     }
 
     pub async fn write_to<W: AsyncWrite + Send + Unpin>(&self, mut w: W) -> anyhow::Result<()> {
         w.write(SERIES_SEGMENT_MAGIC.as_bytes()).await?;
         w.write_u8(self.version).await?;
-        // w.write_u32(self.crc).await?;
 
         Ok(())
     }
@@ -157,10 +155,8 @@ impl SeriesSegmentHeader {
 
         let mut cursor = Cursor::new(&value[SERIES_SEGMENT_MAGIC.len()..]);
         let version = cursor.get_u8();
-        // let crc = cursor.get_u32();
-        let crc = 0;
 
-        Ok((Self { version, crc }, n))
+        Ok((Self { version }, n))
     }
 }
 
@@ -169,7 +165,6 @@ pub struct SeriesSegment {
 
     op: StorageOperator,
     writer: Option<Writer>,
-    reader: Reader,
     write_offset: u32,
     max_file_size: u32,
 }
@@ -207,7 +202,6 @@ impl SeriesSegment {
             segment_id,
             op,
             writer: None,
-            reader,
             write_offset,
             max_file_size,
         })
@@ -386,6 +380,19 @@ pub fn series_segment_size(id: u16) -> u32 {
     1 << shift
 }
 
+pub struct SeriesOffset(u64);
+
+impl SeriesOffset {
+    pub fn join(segment_id: u16, pos: u32) -> Self {
+        let v = ((segment_id as u64) << 32) | (pos as u64);
+        SeriesOffset(v)
+    }
+
+    pub fn split(&self) -> (u16, u32) {
+        ((self.0 >> 32 & 0xFFFF) as u16, (self.0 & 0xFFFFFFFF) as u32)
+    }
+}
+
 // join_series_offset returns an offset that combines the 2-byte segmentID and 4-byte pos.
 pub fn join_series_offset(segment_id: u16, pos: u32) -> u64 {
     return ((segment_id as u64) << 32) | (pos as u64);
@@ -412,22 +419,17 @@ pub fn is_valid_series_segment_filename(filename: &str) -> bool {
 }
 
 /// find_segment returns a segment by id.
-pub fn find_segment(a: &[SeriesSegment], id: u16) -> Option<&SeriesSegment> {
-    for segment in a {
-        if segment.segment_id == id {
-            return Some(segment);
-        }
-    }
-    None
+pub fn find_segment(segments: &[SeriesSegment], id: u16) -> Option<&SeriesSegment> {
+    segments.iter().find(|x| x.segment_id == id)
 }
 
-// read_series_key_from_segments returns a series key from an offset within a set of segments.
+/// read_series_key_from_segments returns a series key from an offset within a set of segments.
 pub async fn read_series_key_from_segments(
-    a: &[SeriesSegment],
+    segments: &[SeriesSegment],
     offset: u64,
 ) -> anyhow::Result<Option<Vec<u8>>> {
     let (segment_id, pos) = split_series_offset(offset);
-    if let Some(segment) = find_segment(a, segment_id) {
+    if let Some(segment) = find_segment(segments, segment_id) {
         let pos = pos - SERIES_ENTRY_HEADER_SIZE as u32;
         let mut itr = segment.series_iterator(pos).await?;
         if let Some((entry, _len)) = itr.next().await? {
@@ -443,7 +445,7 @@ pub async fn read_series_key_from_segments(
 
 #[cfg(test)]
 mod tests {
-    use influxdb_common::iterator::AsyncIterator;
+    use common_base::iterator::AsyncIterator;
     use influxdb_storage::{operator, StorageOperator};
 
     use crate::series::series_segment::SeriesSegment;
