@@ -455,7 +455,7 @@ mod tests {
     async fn test_segment_read() -> anyhow::Result<()> {
         let op = operator()?;
         let op = StorageOperator::new(op, "/Users/yorkart/.influxdb/data/stress/_series/00/0000");
-        let mut segment = SeriesSegment::open(0, op, false).await?;
+        let segment = SeriesSegment::open(0, op, false).await?;
 
         let mut itr = segment.series_iterator(0).await?;
         while let Some((entry, offset)) = itr.try_next().await? {

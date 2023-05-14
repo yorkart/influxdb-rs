@@ -51,8 +51,12 @@ async-trait = "0.1"
 tokio = {version = "1",  features = ["full"]}
 
 memmap2 = "0.6"
+protobuf = { version = "3" }
 
 [dev-dependencies]
 rand = "0.8"
 quickcheck = "1"
 tempfile = "3.5"
+
+[build-dependencies]
+protobuf-codegen = "3"

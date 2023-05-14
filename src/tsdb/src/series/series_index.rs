@@ -152,17 +152,17 @@ impl SeriesIndex {
         })
     }
 
-    // count returns the number of series in the index.
+    /// count returns the number of series in the index.
     pub fn count(&self) -> u64 {
         self.on_disk_count() + self.in_mem_count()
     }
 
-    // on_disk_count returns the number of series in the on-disk index.
+    /// on_disk_count returns the number of series in the on-disk index.
     pub fn on_disk_count(&self) -> u64 {
         self.hdr.count
     }
 
-    // in_mem_count returns the number of series in the in-memory index.
+    /// in_mem_count returns the number of series in the in-memory index.
     pub fn in_mem_count(&self) -> u64 {
         self.id_offset_map.len() as u64
     }

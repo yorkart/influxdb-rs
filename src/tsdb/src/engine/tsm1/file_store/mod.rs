@@ -63,8 +63,6 @@ pub struct KeyRange {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use influxdb_storage::StorageOperator;
 
     use crate::engine::tsm1::block::BLOCK_FLOAT64;
@@ -99,7 +97,7 @@ mod tests {
 
         {
             let op = influxdb_storage::operator().unwrap();
-            let op = Arc::new(StorageOperator::new(op, tsm_file.to_str().unwrap()));
+            let op = StorageOperator::new(op, tsm_file.to_str().unwrap());
 
             let mut r = DefaultTSMReader::new(op).await.unwrap();
 
@@ -108,11 +106,9 @@ mod tests {
                 .await
                 .unwrap();
 
-            let mut float_values = Vec::new();
+            let mut float_values: Vec<Value<f64>> = Vec::new();
             for entry in entries.entries {
-                r.read_float_block_at(entry, &mut float_values)
-                    .await
-                    .unwrap();
+                r.read_block_at(entry, &mut float_values).await.unwrap();
             }
 
             for v in float_values {
