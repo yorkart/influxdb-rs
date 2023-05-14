@@ -10,7 +10,9 @@ use tokio::sync::RwLock;
 use crate::engine::tsm1::encoding::BlockDecoder;
 use crate::engine::tsm1::file_store::index::{IndexEntries, IndexEntry};
 use crate::engine::tsm1::file_store::reader::batch_deleter::BatchDeleter;
-use crate::engine::tsm1::file_store::reader::block_iterator::AsyncIteratorBuilder;
+use crate::engine::tsm1::file_store::reader::block_iterator::{
+    AsyncIteratorBuilder, BlockIteratorBuilder,
+};
 use crate::engine::tsm1::file_store::reader::block_reader::{DefaultBlockAccessor, TSMBlock};
 use crate::engine::tsm1::file_store::reader::index_reader::{IndirectIndex, KeyIterator, TSMIndex};
 use crate::engine::tsm1::file_store::stat::FileStat;
@@ -26,9 +28,7 @@ pub trait TSMReader: Sync + Send {
     /// has not be written or loaded from disk, the zero value is returned.
     fn path(&self) -> &str;
 
-    async fn block_iterator_builder<B>(&self) -> anyhow::Result<B>
-    where
-        B: AsyncIteratorBuilder;
+    async fn block_iterator_builder(&self) -> anyhow::Result<Box<dyn AsyncIteratorBuilder>>;
 
     async fn read_block_at<T>(&self, entry: IndexEntry, values: &mut T) -> anyhow::Result<()>
     where
@@ -142,10 +142,6 @@ where
     pub fn index(&self) -> &I {
         &self.index
     }
-
-    pub async fn close(&mut self) -> anyhow::Result<()> {
-        Ok(())
-    }
 }
 
 pub(crate) type ShareTSMReaderInner<I, B> = Arc<TSMReaderInner<I, B>>;
@@ -174,9 +170,9 @@ where
     last_modified: i64,
 
     /// Counter incremented everytime the mmapAccessor is accessed
-    access_count: u64,
+    access_count: AtomicU64,
     /// Counter to determine whether the accessor can free its resources
-    free_count: u64,
+    free_count: AtomicU64,
 }
 
 impl DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
@@ -193,6 +189,11 @@ impl DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
                 "BlockAccessor: byte slice too small for IndirectIndex"
             ));
         }
+
+        let last_modified = stat
+            .last_modified()
+            .map(|x| x.timestamp_millis())
+            .unwrap_or_default();
 
         let index_ofs_pos = file_size - 8;
         reader.seek(SeekFrom::Start(index_ofs_pos)).await?;
@@ -216,9 +217,9 @@ impl DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
             inner,
             tombstoner: RwLock::new(tombstoner),
             size: 0,
-            last_modified: 0,
-            access_count: 0,
-            free_count: 0,
+            last_modified,
+            access_count: AtomicU64::new(0),
+            free_count: AtomicU64::new(0),
         })
     }
 
@@ -258,13 +259,11 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
         self.op.path()
     }
 
-    async fn block_iterator_builder<B>(&self) -> anyhow::Result<B>
-    where
-        B: AsyncIteratorBuilder,
-    {
-        // let op = self.op.reader().await?;
-        // Ok(BlockIteratorBuilder::new(op, self.inner.clone()))
-        todo!()
+    async fn block_iterator_builder(&self) -> anyhow::Result<Box<dyn AsyncIteratorBuilder>> {
+        let op = self.op.reader().await.unwrap();
+        let inner = self.inner.clone();
+        let builder = Box::new(BlockIteratorBuilder::new(op, inner));
+        Ok(builder)
     }
 
     async fn read_block_at<T>(&self, entry: IndexEntry, values: &mut T) -> anyhow::Result<()>
@@ -402,7 +401,7 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
             self.path().to_string(),
             has_tombstone,
             self.size().await,
-            0,
+            self.last_modified,
             time_range,
             key_range,
         ))

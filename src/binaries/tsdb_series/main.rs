@@ -1,5 +1,5 @@
 use clap::Parser;
-use influxdb_common::iterator::AsyncIterator;
+use common_base::iterator::AsyncIterator;
 use influxdb_storage::StorageOperator;
 use influxdb_tsdb::series::series_segment::SeriesSegment;
 use serde::Deserialize;

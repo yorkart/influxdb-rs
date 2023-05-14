@@ -64,9 +64,10 @@ impl TSMBlock for DefaultBlockAccessor {
 
         let _checksum = reader.read_u32().await?;
 
-        buf.resize(entry.size as usize - 4, 0);
+        let block_size = entry.size as usize - 4;
+        buf.resize(block_size, 0);
         let n = reader.read(buf.as_mut_slice()).await?;
-        if n != entry.size as usize {
+        if n != block_size {
             return Err(anyhow!("not enough entry were read"));
         }
 

@@ -33,12 +33,6 @@ const MAX_KEY_LENGTH: usize = (1 << (2 * 8)) - 1;
 /// long pauses due to very large fsyncs at the end of writing a TSM file.
 const FSYNC_EVERY: u64 = 25 * 1024 * 1024;
 
-/// The extension used to describe temporary snapshot files.
-pub(crate) const TMP_TSMFILE_EXTENSION: &'static str = "tmp";
-
-/// The extension used to describe corrupt snapshot files.
-pub(crate) const BAD_TSMFILE_EXTENSION: &'static str = "bad";
-
 /// TimeRange holds a min and max timestamp.
 #[derive(Debug, Clone)]
 pub struct TimeRange {

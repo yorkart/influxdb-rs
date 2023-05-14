@@ -2,13 +2,13 @@ use crate::engine::tsm1::file_store::{KeyRange, TimeRange};
 
 /// FileStat holds information about a TSM file on disk.
 pub struct FileStat {
-    path: String,
-    has_tombstone: bool,
-    size: u32,
-    last_modified: i64,
+    pub path: String,
+    pub has_tombstone: bool,
+    pub size: u32,
+    pub last_modified: i64,
 
-    time_range: TimeRange,
-    key_range: KeyRange,
+    pub time_range: TimeRange,
+    pub key_range: KeyRange,
 }
 
 impl FileStat {
@@ -52,6 +52,6 @@ impl FileStat {
 
 /// FileStoreStatistics keeps statistics about the file store.
 pub struct FileStoreStatistics {
-    disk_bytes: i64,
-    file_count: i64,
+    pub disk_bytes: i64,
+    pub file_count: i64,
 }

@@ -10,17 +10,19 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::RwLock;
 
 use crate::engine::tsm1::file_store::index::{IndexEntries, IndexEntry};
-use crate::engine::tsm1::file_store::{KeyRange, TimeRange, INDEX_COUNT_SIZE, INDEX_ENTRY_SIZE};
+use crate::engine::tsm1::file_store::{
+    KeyRange, TimeRange, INDEX_COUNT_SIZE, INDEX_ENTRY_SIZE, INDEX_TYPE_SIZE,
+};
 
 const NIL_OFFSET: u64 = u64::MAX;
 
-pub struct IndexHeader {
-    index_of_offset: usize,
-
-    key: Vec<u8>,
-    typ: u8,
-    count: u16,
-}
+// pub struct IndexHeader {
+//     index_of_offset: usize,
+//
+//     key: Vec<u8>,
+//     typ: u8,
+//     count: u16,
+// }
 
 /// TSMIndex represent the index section of a TSM file.  The index records all
 /// blocks, their locations, sizes, min and max times.
@@ -729,7 +731,7 @@ async fn read_entries(
     entries: &mut IndexEntries,
 ) -> anyhow::Result<u64> {
     // check space: | type(1B) | count(2B) |
-    if max_offset - offset < (1 + INDEX_COUNT_SIZE) as u64 {
+    if max_offset - offset < (INDEX_TYPE_SIZE + INDEX_COUNT_SIZE) as u64 {
         return Err(anyhow!("readEntries: data too short for headers"));
     }
 
