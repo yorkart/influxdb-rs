@@ -7,7 +7,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, As
 
 use crate::common::Section;
 use crate::series::series_segment::{
-    read_series_key_from_segments, SeriesEntry, SeriesEntryFlag, SeriesSegment,
+    read_series_key_from_segments, SeriesEntry, SeriesEntryFlag, SeriesOffset, SeriesSegment,
     SERIES_ENTRY_HEADER_SIZE,
 };
 
@@ -16,16 +16,16 @@ const SERIES_INDEX_MAGIC: &'static str = "SIDX";
 
 /// offset + id
 const SERIES_INDEX_ELEM_SIZE: u32 = 16;
-/// rhh load factor
-const SERIES_INDEX_LOAD_FACTOR: u32 = 90;
+// /// rhh load factor
+// const SERIES_INDEX_LOAD_FACTOR: u32 = 90;
 
-const SERIES_INDEX_HEADER_SIZE: u32 = 0 +
-    4 + 1 + // magic + version
-    8 + 8 + // max series + max offset
-    8 + 8 + // count + capacity
-    8 + 8 + // key/id map offset & size
-    8 + 8 + // id/offset map offset & size
-    0;
+// const SERIES_INDEX_HEADER_SIZE: u32 = 0 +
+//     4 + 1 + // magic + version
+//     8 + 8 + // max series + max offset
+//     8 + 8 + // count + capacity
+//     8 + 8 + // key/id map offset & size
+//     8 + 8 + // id/offset map offset & size
+//     0;
 
 ///SeriesIndexHeader represents the header of a series index.
 #[derive(Default)]
@@ -33,7 +33,7 @@ pub struct SeriesIndexHeader {
     version: u8,
 
     max_series_id: u64,
-    max_offset: u64,
+    max_offset: SeriesOffset,
 
     count: u64,
     capacity: u64,
@@ -53,7 +53,7 @@ impl SeriesIndexHeader {
         w.write(SERIES_INDEX_MAGIC.as_bytes()).await?;
         w.write_u8(self.version).await?;
         w.write_u64(self.max_series_id).await?;
-        w.write_u64(self.max_offset).await?;
+        w.write_u64(self.max_offset.0).await?;
         w.write_u64(self.count).await?;
         w.write_u64(self.capacity).await?;
         self.key_id_map.write_to(&mut w).await?;
@@ -107,7 +107,7 @@ impl SeriesIndexHeader {
             Self {
                 version,
                 max_series_id,
-                max_offset,
+                max_offset: SeriesOffset(max_offset),
                 count,
                 capacity,
                 key_id_map,
@@ -128,7 +128,7 @@ pub struct SeriesIndex {
     /// map: key -> segment_id
     key_id_map: HashMap<Vec<u8>, u64>,
     /// map: segment_id -> offset
-    id_offset_map: HashMap<u64, u64>,
+    id_offset_map: HashMap<u64, SeriesOffset>,
     /// set: segment_id
     tombstones: HashSet<u64>,
 }
@@ -152,17 +152,17 @@ impl SeriesIndex {
         })
     }
 
-    // count returns the number of series in the index.
+    /// count returns the number of series in the index.
     pub fn count(&self) -> u64 {
         self.on_disk_count() + self.in_mem_count()
     }
 
-    // on_disk_count returns the number of series in the on-disk index.
+    /// on_disk_count returns the number of series in the on-disk index.
     pub fn on_disk_count(&self) -> u64 {
         self.hdr.count
     }
 
-    // in_mem_count returns the number of series in the in-memory index.
+    /// in_mem_count returns the number of series in the in-memory index.
     pub fn in_mem_count(&self) -> u64 {
         self.id_offset_map.len() as u64
     }
@@ -173,21 +173,21 @@ impl SeriesIndex {
         }
 
         let offset = self.find_offset_by_id(series_id).await?;
-        Ok(offset == 0)
+        Ok(offset.is_none())
     }
 
-    pub fn exec_entry(&mut self, entry: SeriesEntry, offset: u64) {
+    pub fn exec_entry(&mut self, entry: SeriesEntry, series_offset: SeriesOffset) {
         let SeriesEntry { flag, id } = entry;
         match flag {
             SeriesEntryFlag::InsertFlag(key) => {
                 self.key_id_map.insert(key, id);
-                self.id_offset_map.insert(id, offset);
+                self.id_offset_map.insert(id, series_offset);
 
                 if id > self.hdr.max_series_id {
                     self.hdr.max_series_id = id;
                 }
-                if offset > self.hdr.max_offset {
-                    self.hdr.max_offset = offset;
+                if series_offset > self.hdr.max_offset {
+                    self.hdr.max_offset = series_offset;
                 }
             }
             SeriesEntryFlag::TombstoneFlag => {
@@ -252,9 +252,9 @@ impl SeriesIndex {
         }
     }
 
-    pub async fn find_offset_by_id(&self, series_id: u64) -> anyhow::Result<u64> {
-        if let Some(offset) = self.id_offset_map.get(&series_id) {
-            return Ok(*offset);
+    pub async fn find_offset_by_id(&self, series_id: u64) -> anyhow::Result<Option<SeriesOffset>> {
+        if let Some(series_offset) = self.id_offset_map.get(&series_id) {
+            return Ok(Some(*series_offset));
         }
 
         let mask = self.hdr.capacity - 1;
@@ -271,15 +271,15 @@ impl SeriesIndex {
             let element_id = reader.read_u64().await?;
             if element_id == series_id {
                 let offset = reader.read_u64().await?;
-                return Ok(offset);
+                return Ok(Some(SeriesOffset(offset)));
             } else {
                 if element_id == 0 {
-                    return Ok(0);
+                    return Ok(None);
                 }
 
                 let hash = hash_key(element_id.to_be_bytes().as_slice());
                 if d > dist(hash, pos, self.hdr.capacity) {
-                    return Ok(0);
+                    return Ok(None);
                 }
             }
 
@@ -287,11 +287,4 @@ impl SeriesIndex {
             pos = (pos + 1) & mask;
         }
     }
-}
-
-#[cfg(test)]
-mod tests {
-
-    #[test]
-    fn test_index() {}
 }

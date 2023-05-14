@@ -33,12 +33,6 @@ const MAX_KEY_LENGTH: usize = (1 << (2 * 8)) - 1;
 /// long pauses due to very large fsyncs at the end of writing a TSM file.
 const FSYNC_EVERY: u64 = 25 * 1024 * 1024;
 
-/// The extension used to describe temporary snapshot files.
-pub(crate) const TMP_TSMFILE_EXTENSION: &'static str = "tmp";
-
-/// The extension used to describe corrupt snapshot files.
-pub(crate) const BAD_TSMFILE_EXTENSION: &'static str = "bad";
-
 /// TimeRange holds a min and max timestamp.
 #[derive(Debug, Clone)]
 pub struct TimeRange {
@@ -69,8 +63,6 @@ pub struct KeyRange {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use influxdb_storage::StorageOperator;
 
     use crate::engine::tsm1::block::BLOCK_FLOAT64;
@@ -105,7 +97,7 @@ mod tests {
 
         {
             let op = influxdb_storage::operator().unwrap();
-            let op = Arc::new(StorageOperator::new(op, tsm_file.to_str().unwrap()));
+            let op = StorageOperator::new(op, tsm_file.to_str().unwrap());
 
             let mut r = DefaultTSMReader::new(op).await.unwrap();
 
@@ -114,11 +106,9 @@ mod tests {
                 .await
                 .unwrap();
 
-            let mut float_values = Vec::new();
+            let mut float_values: Vec<Value<f64>> = Vec::new();
             for entry in entries.entries {
-                r.read_float_block_at(entry, &mut float_values)
-                    .await
-                    .unwrap();
+                r.read_block_at(entry, &mut float_values).await.unwrap();
             }
 
             for v in float_values {

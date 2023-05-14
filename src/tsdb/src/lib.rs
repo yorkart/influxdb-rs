@@ -9,4 +9,5 @@ extern crate lazy_static;
 pub mod common;
 pub mod engine;
 pub mod index;
+pub mod meta;
 pub mod series;

@@ -129,6 +129,11 @@ impl StorageOperator {
         }
     }
 
+    pub fn root(path: &str) -> std::io::Result<Self> {
+        let op = operator()?;
+        Ok(Self::new(op, path))
+    }
+
     pub fn operator(&self) -> crate::opendal::Operator {
         self.operator.clone()
     }

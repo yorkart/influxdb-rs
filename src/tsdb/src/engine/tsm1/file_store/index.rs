@@ -7,6 +7,7 @@ use tokio::io::{AsyncWrite, AsyncWriteExt};
 use crate::engine::tsm1::file_store::{TimeRange, INDEX_ENTRY_SIZE};
 
 /// IndexEntry is the index information for a given block in a TSM file.
+#[derive(Clone, Debug)]
 pub struct IndexEntry {
     /// The min and max time of all points stored in the block.
     pub min_time: i64,
@@ -29,8 +30,8 @@ impl IndexEntry {
         }
     }
 
-    /// unmarshal_binary decodes an IndexEntry from a byte slice.
-    pub fn unmarshal_binary(b: &[u8]) -> anyhow::Result<Self> {
+    /// decodes an IndexEntry from a byte slice.
+    pub fn read_from(b: &[u8]) -> anyhow::Result<Self> {
         if b.len() < INDEX_ENTRY_SIZE {
             return Err(anyhow!(
                 "unmarshalBinary: short buf: {} < {}",
@@ -52,9 +53,9 @@ impl IndexEntry {
         })
     }
 
-    /// append_to writes a binary-encoded version of IndexEntry to b, allocating
+    /// writes a binary-encoded version of IndexEntry to b, allocating
     /// and returning a new slice, if necessary.
-    pub fn append_to(&self, b: &mut Vec<u8>) {
+    pub fn write_to(&self, b: &mut Vec<u8>) {
         b.put_u64(self.min_time as u64);
         b.put_u64(self.max_time as u64);
         b.put_u64(self.offset as u64);
@@ -126,27 +127,11 @@ impl IndexEntries {
         }
     }
 
-    pub fn min_time(&self) -> i64 {
-        if self.entries.len() > 0 {
-            self.entries[0].min_time
-        } else {
-            i64::MIN
-        }
-    }
-
-    pub fn max_time(&self) -> i64 {
-        if self.entries.len() > 0 {
-            self.entries[self.entries.len() - 1].max_time
-        } else {
-            i64::MAX
-        }
-    }
-
     pub fn marshal_binary(&self) -> anyhow::Result<Vec<u8>> {
         let mut buf = Vec::with_capacity(self.entries.len() * INDEX_ENTRY_SIZE);
 
         for entry in &self.entries {
-            entry.append_to(&mut buf);
+            entry.write_to(&mut buf);
         }
 
         Ok(buf)
@@ -158,7 +143,7 @@ impl IndexEntries {
 
         for entry in &self.entries {
             buf.clear();
-            entry.append_to(&mut buf);
+            entry.write_to(&mut buf);
             let n = w.write(buf.as_slice()).await.map_err(|e| anyhow!(e))?;
             total += n as u64;
         }

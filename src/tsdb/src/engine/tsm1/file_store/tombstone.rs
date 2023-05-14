@@ -1,19 +1,18 @@
 use std::io;
 use std::io::{ErrorKind, SeekFrom};
-use std::ops::Deref;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use async_compression::tokio::bufread::GzipDecoder;
 use async_compression::tokio::write::GzipEncoder;
 use influxdb_storage::opendal::{Operator, Reader, Writer};
-use influxdb_storage::{SharedStorageOperator, StorageOperator};
+use influxdb_storage::StorageOperator;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::mpsc::Sender;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::Mutex;
 
 use crate::engine::tsm1::file_store::reader::block_reader::TSMBlock;
 use crate::engine::tsm1::file_store::reader::index_reader::TSMIndex;
+use crate::engine::tsm1::file_store::reader::tsm_reader::ShareTSMReaderInner;
 use crate::engine::tsm1::file_store::TimeRange;
 use crate::engine::COMPACTION_TEMP_EXTENSION;
 
@@ -57,7 +56,7 @@ where
     I: TSMIndex,
     B: TSMBlock,
 {
-    reader: Arc<RwLock<(I, B)>>,
+    inner: ShareTSMReaderInner<I, B>,
 }
 
 impl<I, B> IndexTombstonerFilter<I, B>
@@ -65,8 +64,8 @@ where
     I: TSMIndex + Send + Sync,
     B: TSMBlock + Send + Sync,
 {
-    pub fn new(reader: Arc<RwLock<(I, B)>>) -> Self {
-        Self { reader }
+    pub fn new(inner: ShareTSMReaderInner<I, B>) -> Self {
+        Self { inner }
     }
 }
 
@@ -77,9 +76,7 @@ where
     B: TSMBlock + Send + Sync,
 {
     async fn filter(&self, key: &[u8]) -> bool {
-        let reader = self.reader.write().await;
-        let (i, _b) = reader.deref();
-        i.contains_key(key)
+        self.inner.index().contains_key(key)
     }
 }
 
@@ -88,7 +85,7 @@ pub struct Tombstoner<F>
 where
     F: TombstonerFilter,
 {
-    op: SharedStorageOperator,
+    op: StorageOperator,
     tx: Mutex<Option<TombstoneTransaction>>,
 
     // Path is the location of the file to record tombstone. This should be the
@@ -110,12 +107,9 @@ impl<F> Tombstoner<F>
 where
     F: TombstonerFilter,
 {
-    pub async fn new(tsm_op: SharedStorageOperator, filter_fn: F) -> anyhow::Result<Self> {
+    pub async fn new(tsm_op: StorageOperator, filter_fn: F) -> anyhow::Result<Self> {
         let tombstone_path = Self::tombstone_path(tsm_op.path().parse().unwrap());
-        let op = Arc::new(StorageOperator::new(
-            tsm_op.operator(),
-            tombstone_path.to_str().unwrap(),
-        ));
+        let op = tsm_op.to_op(tombstone_path.to_str().unwrap());
         Ok(Self {
             op,
             tx: Mutex::new(None),

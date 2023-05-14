@@ -1,20 +1,20 @@
 use std::io::SeekFrom;
-use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use influxdb_storage::opendal::Reader;
-use influxdb_storage::SharedStorageOperator;
+use influxdb_storage::StorageOperator;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::RwLock;
 
-use crate::engine::tsm1::encoding::{
-    BooleanValues, FloatValues, IntegerValues, StringValues, UnsignedValues,
-};
+use crate::engine::tsm1::encoding::BlockDecoder;
 use crate::engine::tsm1::file_store::index::{IndexEntries, IndexEntry};
 use crate::engine::tsm1::file_store::reader::batch_deleter::BatchDeleter;
+use crate::engine::tsm1::file_store::reader::block_iterator::{
+    AsyncIteratorBuilder, BlockIteratorBuilder,
+};
 use crate::engine::tsm1::file_store::reader::block_reader::{DefaultBlockAccessor, TSMBlock};
-use crate::engine::tsm1::file_store::reader::index_reader::{IndirectIndex, TSMIndex};
+use crate::engine::tsm1::file_store::reader::index_reader::{IndirectIndex, KeyIterator, TSMIndex};
 use crate::engine::tsm1::file_store::stat::FileStat;
 use crate::engine::tsm1::file_store::tombstone::{
     IndexTombstonerFilter, TombstoneStat, Tombstoner,
@@ -28,48 +28,14 @@ pub trait TSMReader: Sync + Send {
     /// has not be written or loaded from disk, the zero value is returned.
     fn path(&self) -> &str;
 
-    // /// read returns all the values in the block where time t resides.
-    // async fn read(&mut self, key: &[u8], t: i64) -> anyhow::Result<()>;
-    //
-    // /// read_at returns all the values in the block identified by entry.
-    // async fn read_at(&mut self, entry: IndexEntry, values: Values) -> anyhow::Result<()>;
+    async fn block_iterator_builder(&self) -> anyhow::Result<Box<dyn AsyncIteratorBuilder>>;
 
-    async fn read_float_block_at(
-        &self,
-        entry: IndexEntry,
-        values: &mut FloatValues,
-    ) -> anyhow::Result<()>;
-
-    async fn read_integer_block_at(
-        &mut self,
-        entry: IndexEntry,
-        values: &mut IntegerValues,
-    ) -> anyhow::Result<()>;
-
-    async fn read_unsigned_block_at(
-        &mut self,
-        entry: IndexEntry,
-        values: &mut UnsignedValues,
-    ) -> anyhow::Result<()>;
-
-    async fn read_string_block_at(
-        &mut self,
-        entry: IndexEntry,
-        values: &mut StringValues,
-    ) -> anyhow::Result<()>;
-
-    async fn read_boolean_block_at(
-        &mut self,
-        entry: IndexEntry,
-        values: &mut BooleanValues,
-    ) -> anyhow::Result<()>;
+    async fn read_block_at<T>(&self, entry: IndexEntry, values: &mut T) -> anyhow::Result<()>
+    where
+        T: BlockDecoder;
 
     /// Entries returns the index entries for all blocks for the given key.
     async fn read_entries(&self, key: &[u8], entries: &mut IndexEntries) -> anyhow::Result<()>;
-
-    /// Returns true if the TSMFile may contain a value with the specified
-    /// key and time.
-    async fn contains_value(&mut self, key: &[u8], t: i64) -> anyhow::Result<bool>;
 
     /// contains returns true if the file contains any values for the given
     /// key.
@@ -77,9 +43,6 @@ pub trait TSMReader: Sync + Send {
 
     /// overlaps_time_range returns true if the time range of the file intersect min and max.
     async fn overlaps_time_range(&mut self, min: i64, max: i64) -> bool;
-
-    /// overlaps_key_range returns true if the key range of the file intersects min and max.
-    async fn overlaps_key_range(&mut self, min: &[u8], max: &[u8]) -> bool;
 
     /// time_range returns the min and max time across all keys in the file.
     async fn time_range(&self) -> TimeRange;
@@ -93,6 +56,8 @@ pub trait TSMReader: Sync + Send {
     /// key_count returns the number of distinct keys in the file.
     async fn key_count(&self) -> usize;
 
+    async fn key_iterator(&self) -> anyhow::Result<KeyIterator>;
+
     /// seek returns the position in the index with the key <= key.
     async fn seek(&mut self, key: &[u8]) -> anyhow::Result<u64>;
 
@@ -102,7 +67,7 @@ pub trait TSMReader: Sync + Send {
     /// Type returns the block type of the values stored for the key.  Returns one of
     /// BlockFloat64, BlockInt64, BlockBoolean, BlockString.  If key does not exist,
     /// an error is returned.
-    async fn block_type(&mut self, key: &[u8]) -> anyhow::Result<u8>;
+    async fn block_type(&self, key: &[u8]) -> anyhow::Result<u8>;
 
     /// batch_delete return a BatchDeleter that allows for multiple deletes in batches
     /// and group commit or rollback.
@@ -127,10 +92,6 @@ pub trait TSMReader: Sync + Send {
     /// size returns the size of the file on disk in bytes.
     async fn size(&self) -> u32;
 
-    // /// rename renames the existing TSM file to a new name and replaces the mmap backing slice using the new
-    // /// file name. Index and Reader state are not re-initialized.
-    // async fn rename(&mut self, path: &str) -> anyhow::Result<()>;
-
     /// remove deletes the file from the filesystem.
     async fn remove(&mut self) -> anyhow::Result<()>;
 
@@ -150,14 +111,40 @@ pub trait TSMReader: Sync + Send {
     async fn free(&mut self) -> anyhow::Result<()>;
 }
 
-// struct InnerReader<I, B>
-//     where
-//         I: TSMIndex,
-//         B: TSMBlock, {
-//     index: I,
-//     block: B,
-//     tombstoner: Tombstoner<IndexTombstonerFilter<I, B>>,
-// }
+pub async fn new_default_tsm_reader(op: StorageOperator) -> anyhow::Result<impl TSMReader> {
+    DefaultTSMReader::new(op).await
+}
+
+pub(crate) struct TSMReaderInner<I, B>
+where
+    I: TSMIndex,
+    B: TSMBlock,
+{
+    /// index is the index of all blocks.
+    index: I,
+    /// block is the value blocks.
+    block: B,
+}
+
+impl<I, B> TSMReaderInner<I, B>
+where
+    I: TSMIndex,
+    B: TSMBlock,
+{
+    pub fn new(index: I, block: B) -> Self {
+        Self { index, block }
+    }
+
+    pub fn block(&self) -> &B {
+        &self.block
+    }
+
+    pub fn index(&self) -> &I {
+        &self.index
+    }
+}
+
+pub(crate) type ShareTSMReaderInner<I, B> = Arc<TSMReaderInner<I, B>>;
 
 pub(crate) struct DefaultTSMReader<I, B>
 where
@@ -168,10 +155,10 @@ where
     refs: AtomicU64,
 
     /// accessor provides access and decoding of blocks for the reader.
-    op: SharedStorageOperator,
+    op: StorageOperator,
 
     /// index is the index of all blocks.
-    inner: Arc<RwLock<(I, B)>>,
+    inner: ShareTSMReaderInner<I, B>,
 
     /// tombstoner ensures tombstoned keys are not available by the index.
     tombstoner: RwLock<Tombstoner<IndexTombstonerFilter<I, B>>>,
@@ -183,26 +170,30 @@ where
     last_modified: i64,
 
     /// Counter incremented everytime the mmapAccessor is accessed
-    access_count: u64,
+    access_count: AtomicU64,
     /// Counter to determine whether the accessor can free its resources
-    free_count: u64,
+    free_count: AtomicU64,
 }
 
 impl DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
-    pub async fn new(op: SharedStorageOperator) -> anyhow::Result<Self> {
-        let operator = op.operator();
-        let mut reader = op.operator().reader(op.path()).await?;
+    pub async fn new(op: StorageOperator) -> anyhow::Result<Self> {
+        let mut reader = op.reader().await?;
         Self::verify_version(&mut reader).await?;
 
         reader.seek(SeekFrom::Start(0)).await?;
 
-        let stat = operator.stat(op.path()).await?;
+        let stat = op.stat().await?;
         let file_size = stat.content_length();
         if file_size < 8 {
             return Err(anyhow!(
                 "BlockAccessor: byte slice too small for IndirectIndex"
             ));
         }
+
+        let last_modified = stat
+            .last_modified()
+            .map(|x| x.timestamp_millis())
+            .unwrap_or_default();
 
         let index_ofs_pos = file_size - 8;
         reader.seek(SeekFrom::Start(index_ofs_pos)).await?;
@@ -215,20 +206,20 @@ impl DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
         )
         .await?;
         let block = DefaultBlockAccessor::new(index_start).await?;
-        let reader = Arc::new(RwLock::new((index, block)));
+        let inner = Arc::new(TSMReaderInner::new(index, block));
 
         let tombstoner =
-            Tombstoner::new(op.clone(), IndexTombstonerFilter::new(reader.clone())).await?;
+            Tombstoner::new(op.clone(), IndexTombstonerFilter::new(inner.clone())).await?;
 
         Ok(Self {
             refs: Default::default(),
             op,
-            inner: reader.clone(),
+            inner,
             tombstoner: RwLock::new(tombstoner),
             size: 0,
-            last_modified: 0,
-            access_count: 0,
-            free_count: 0,
+            last_modified,
+            access_count: AtomicU64::new(0),
+            free_count: AtomicU64::new(0),
         })
     }
 
@@ -268,165 +259,77 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
         self.op.path()
     }
 
-    async fn read_float_block_at(
-        &self,
-        entry: IndexEntry,
-        values: &mut FloatValues,
-    ) -> anyhow::Result<()> {
-        let mut reader = self.op.reader().await?;
-
-        let inner = self.inner.read().await;
-        let (_i, b) = inner.deref();
-
-        b.read_float_block(&mut reader, entry, values).await
+    async fn block_iterator_builder(&self) -> anyhow::Result<Box<dyn AsyncIteratorBuilder>> {
+        let op = self.op.reader().await.unwrap();
+        let inner = self.inner.clone();
+        let builder = Box::new(BlockIteratorBuilder::new(op, inner));
+        Ok(builder)
     }
 
-    async fn read_integer_block_at(
-        &mut self,
-        entry: IndexEntry,
-        values: &mut IntegerValues,
-    ) -> anyhow::Result<()> {
+    async fn read_block_at<T>(&self, entry: IndexEntry, values: &mut T) -> anyhow::Result<()>
+    where
+        T: BlockDecoder,
+    {
         let mut reader = self.op.reader().await?;
 
-        let inner = self.inner.read().await;
-        let (_i, b) = inner.deref();
+        let mut block = vec![];
+        self.inner
+            .block()
+            .read_block(&mut reader, entry, &mut block)
+            .await?;
+        values.decode(block.as_slice())?;
 
-        b.read_integer_block(&mut reader, entry, values).await
-    }
-
-    async fn read_unsigned_block_at(
-        &mut self,
-        entry: IndexEntry,
-        values: &mut UnsignedValues,
-    ) -> anyhow::Result<()> {
-        let mut reader = self.op.reader().await?;
-
-        let inner = self.inner.read().await;
-        let (_i, b) = inner.deref();
-
-        b.read_unsigned_block(&mut reader, entry, values).await
-    }
-
-    async fn read_string_block_at(
-        &mut self,
-        entry: IndexEntry,
-        values: &mut StringValues,
-    ) -> anyhow::Result<()> {
-        let mut reader = self.op.reader().await?;
-
-        let inner = self.inner.read().await;
-        let (_i, b) = inner.deref();
-
-        b.read_string_block(&mut reader, entry, values).await
-    }
-
-    async fn read_boolean_block_at(
-        &mut self,
-        entry: IndexEntry,
-        values: &mut BooleanValues,
-    ) -> anyhow::Result<()> {
-        let mut reader = self.op.reader().await?;
-
-        let inner = self.inner.read().await;
-        let (_i, b) = inner.deref();
-
-        b.read_boolean_block(&mut reader, entry, values).await
+        Ok(())
     }
 
     async fn read_entries(&self, key: &[u8], entries: &mut IndexEntries) -> anyhow::Result<()> {
         let mut reader = self.op.reader().await?;
-
-        let inner = self.inner.read().await;
-        let (i, _b) = inner.deref();
-
-        i.entries(&mut reader, key, entries).await
-    }
-
-    async fn contains_value(&mut self, key: &[u8], t: i64) -> anyhow::Result<bool> {
-        let mut reader = self.op.reader().await?;
-
-        let inner = self.inner.read().await;
-        let (i, _b) = inner.deref();
-
-        i.contains_value(&mut reader, key, t).await
+        self.inner.index().entries(&mut reader, key, entries).await
     }
 
     async fn contains(&mut self, key: &[u8]) -> anyhow::Result<bool> {
         let mut reader = self.op.reader().await?;
-
-        let mut inner = self.inner.write().await;
-        let (i, _b) = inner.deref_mut();
-
-        i.contains(&mut reader, key).await
+        self.inner.index().contains(&mut reader, key).await
     }
 
     async fn overlaps_time_range(&mut self, min: i64, max: i64) -> bool {
-        let inner = self.inner.read().await;
-        let (i, _b) = inner.deref();
-
-        i.overlaps_time_range(min, max)
-    }
-
-    async fn overlaps_key_range(&mut self, min: &[u8], max: &[u8]) -> bool {
-        let inner = self.inner.read().await;
-        let (i, _b) = inner.deref();
-
-        i.overlaps_key_range(min, max)
+        self.inner.index().overlaps_time_range(min, max)
     }
 
     async fn time_range(&self) -> TimeRange {
-        let inner = self.inner.read().await;
-        let (i, _b) = inner.deref();
-
-        i.time_range()
+        self.inner.index().time_range()
     }
 
     async fn tombstone_range(&self, key: &[u8]) -> Vec<TimeRange> {
-        let inner = self.inner.read().await;
-        let (i, _b) = inner.deref();
-
-        i.tombstone_range(key).await
+        self.inner.index().tombstone_range(key).await
     }
 
     async fn key_range(&self) -> KeyRange {
-        let inner = self.inner.read().await;
-        let (i, _b) = inner.deref();
-
-        i.key_range()
+        self.inner.index().key_range()
     }
 
     async fn key_count(&self) -> usize {
-        let inner = self.inner.read().await;
-        let (i, _b) = inner.deref();
+        self.inner.index().key_count().await
+    }
 
-        i.key_count().await
+    async fn key_iterator(&self) -> anyhow::Result<KeyIterator> {
+        let reader = self.op.reader().await?;
+        self.inner.index().key_iterator(reader).await
     }
 
     async fn seek(&mut self, key: &[u8]) -> anyhow::Result<u64> {
         let mut reader = self.op.reader().await?;
-
-        let inner = self.inner.read().await;
-        let (i, _b) = inner.deref();
-
-        i.seek(&mut reader, key).await
+        self.inner.index().seek(&mut reader, key).await
     }
 
     async fn key_at(&mut self, idx: usize) -> anyhow::Result<Option<(Vec<u8>, u8)>> {
         let mut reader = self.op.reader().await?;
-
-        let inner = self.inner.read().await;
-        let (i, _b) = inner.deref();
-
-        i.key_at(&mut reader, idx).await
+        self.inner.index().key_at(&mut reader, idx).await
     }
 
-    async fn block_type(&mut self, key: &[u8]) -> anyhow::Result<u8> {
+    async fn block_type(&self, key: &[u8]) -> anyhow::Result<u8> {
         let mut reader = self.op.reader().await?;
-
-        let inner = self.inner.read().await;
-        let (i, _b) = inner.deref();
-
-        i.block_type(&mut reader, key).await
+        self.inner.index().block_type(&mut reader, key).await
     }
 
     async fn batch_delete(&mut self) -> Box<dyn BatchDeleter> {
@@ -435,20 +338,15 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
 
     async fn delete(&self, keys: &mut [&[u8]]) -> anyhow::Result<()> {
         let mut reader = self.op.reader().await?;
-
-        let inner = self.inner.read().await;
-        let (i, _b) = inner.deref();
-
-        i.delete(&mut reader, keys).await
+        self.inner.index().delete(&mut reader, keys).await
     }
 
     async fn delete_range(&self, keys: &mut [&[u8]], min: i64, max: i64) -> anyhow::Result<()> {
         let mut reader = self.op.reader().await?;
-
-        let inner = self.inner.read().await;
-        let (i, _b) = inner.deref();
-
-        i.delete_range(&mut reader, keys, min, max).await
+        self.inner
+            .index()
+            .delete_range(&mut reader, keys, min, max)
+            .await
     }
 
     async fn has_tombstones(&self) -> anyhow::Result<bool> {
@@ -462,10 +360,7 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
     }
 
     async fn close(&mut self) -> anyhow::Result<()> {
-        let mut inner = self.inner.write().await;
-        let (i, b) = inner.deref_mut();
-        i.close().await?;
-        b.close().await
+        Ok(())
     }
 
     async fn size(&self) -> u32 {
@@ -473,14 +368,8 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
     }
 
     async fn remove(&mut self) -> anyhow::Result<()> {
-        {
-            let mut inner = self.inner.write().await;
-            let (i, b) = inner.deref_mut();
-            i.close().await?;
-            b.close().await?;
+        self.op.delete().await?;
 
-            self.op.delete().await?;
-        }
         {
             let tombstoner = self.tombstoner.write().await;
             tombstoner.delete().await?;
@@ -501,8 +390,7 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
     }
 
     async fn stats(&self) -> anyhow::Result<FileStat> {
-        let inner = self.inner.read().await;
-        let (i, _b) = inner.deref();
+        let i = self.inner.index();
 
         let time_range = i.time_range();
         let key_range = i.key_range();
@@ -513,18 +401,13 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
             self.path().to_string(),
             has_tombstone,
             self.size().await,
-            0,
-            time_range.min,
-            time_range.max,
-            key_range.min.to_vec(),
-            key_range.max.to_vec(),
+            self.last_modified,
+            time_range,
+            key_range,
         ))
     }
 
     async fn free(&mut self) -> anyhow::Result<()> {
-        let mut inner = self.inner.write().await;
-        let (_i, b) = inner.deref_mut();
-
-        b.free().await
+        self.inner.block().free().await
     }
 }

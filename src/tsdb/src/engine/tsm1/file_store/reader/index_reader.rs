@@ -4,14 +4,25 @@ use std::io;
 use std::io::{ErrorKind, SeekFrom};
 use std::sync::Arc;
 
+use common_base::iterator::AsyncIterator;
 use influxdb_storage::opendal::Reader;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::RwLock;
 
 use crate::engine::tsm1::file_store::index::{IndexEntries, IndexEntry};
-use crate::engine::tsm1::file_store::{KeyRange, TimeRange, INDEX_COUNT_SIZE, INDEX_ENTRY_SIZE};
+use crate::engine::tsm1::file_store::{
+    KeyRange, TimeRange, INDEX_COUNT_SIZE, INDEX_ENTRY_SIZE, INDEX_TYPE_SIZE,
+};
 
 const NIL_OFFSET: u64 = u64::MAX;
+
+// pub struct IndexHeader {
+//     index_of_offset: usize,
+//
+//     key: Vec<u8>,
+//     typ: u8,
+//     count: u16,
+// }
 
 /// TSMIndex represent the index section of a TSM file.  The index records all
 /// blocks, their locations, sizes, min and max times.
@@ -34,17 +45,7 @@ pub trait TSMIndex: Send + Sync {
     fn contains_key(&self, key: &[u8]) -> bool;
 
     /// contains return true if the given key exists in the index.
-    async fn contains(&mut self, reader: &mut Reader, key: &[u8]) -> anyhow::Result<bool>;
-
-    /// contains_value returns true if key and time might exist in this file.  This function could
-    /// return true even though the actual point does not exists.  For example, the key may
-    /// exist in this file, but not have a point exactly at time t.
-    async fn contains_value(
-        &self,
-        reader: &mut Reader,
-        key: &[u8],
-        timestamp: i64,
-    ) -> anyhow::Result<bool>;
+    async fn contains(&self, reader: &mut Reader, key: &[u8]) -> anyhow::Result<bool>;
 
     /// entries reads the index entries for key into entries.
     async fn entries(
@@ -81,6 +82,8 @@ pub trait TSMIndex: Send + Sync {
     /// key_count returns the count of unique keys in the index.
     async fn key_count(&self) -> usize;
 
+    async fn key_iterator(&self, reader: Reader) -> anyhow::Result<KeyIterator>;
+
     /// seek returns the position in the index where key <= value in the index.
     async fn seek(&self, reader: &mut Reader, key: &[u8]) -> anyhow::Result<u64>;
 
@@ -106,9 +109,48 @@ pub trait TSMIndex: Send + Sync {
     /// BlockFloat64, BlockInt64, BlockBool, BlockString.  If key does not exist,
     /// an error is returned.
     async fn block_type(&self, reader: &mut Reader, key: &[u8]) -> anyhow::Result<u8>;
+}
 
-    /// close closes the index and releases any resources.
-    async fn close(&mut self) -> anyhow::Result<()>;
+pub struct KeyIterator {
+    reader: Reader,
+    index_offset: u64,
+    max_offset: u64,
+}
+
+impl KeyIterator {
+    pub async fn new(reader: Reader, index_offset: u64, index_len: u32) -> anyhow::Result<Self> {
+        Ok(Self {
+            reader,
+            index_offset,
+            max_offset: index_offset + (index_len as u64),
+        })
+    }
+}
+
+#[async_trait]
+impl AsyncIterator for KeyIterator {
+    type Item = Vec<u8>;
+
+    async fn try_next(&mut self) -> anyhow::Result<Option<Self::Item>> {
+        if self.index_offset >= self.max_offset {
+            return Ok(None);
+        }
+
+        self.reader.seek(SeekFrom::Start(self.index_offset)).await?;
+
+        let key_len = self.reader.read_u16().await? as usize;
+
+        let mut key = Vec::with_capacity(key_len);
+        key.resize(key_len, 0);
+        self.reader.read(key.as_mut_slice()).await?;
+
+        let _type = self.reader.read_u8().await?;
+
+        let count = self.reader.read_u16().await?;
+        self.index_offset += (key_len as u64) + 5 + (count as u64) * (INDEX_ENTRY_SIZE as u64);
+
+        Ok(Some(key))
+    }
 }
 
 /// IndirectIndex is a TSMIndex that uses a raw byte slice representation of an index.  This
@@ -141,7 +183,7 @@ pub(crate) struct IndirectIndex {
 
 impl IndirectIndex {
     pub async fn new(
-        accessor: &mut Reader,
+        reader: &mut Reader,
         index_offset: u64,
         index_len: u32,
     ) -> anyhow::Result<Self> {
@@ -170,8 +212,8 @@ impl IndirectIndex {
                     "indirectIndex: not enough data for key length value"
                 ));
             }
-            accessor.seek(SeekFrom::Start(i)).await?;
-            let key_len = accessor.read_u16().await.map_err(|e| anyhow!(e))?;
+            reader.seek(SeekFrom::Start(i)).await?;
+            let key_len = reader.read_u16().await?;
             i += 3 + key_len as u64;
 
             // count of index entries
@@ -180,8 +222,8 @@ impl IndirectIndex {
                     "indirectIndex: not enough data for index entries count"
                 ));
             }
-            accessor.seek(SeekFrom::Start(i)).await?;
-            let count = accessor.read_u16().await.map_err(|e| anyhow!(e))?;
+            reader.seek(SeekFrom::Start(i)).await?;
+            let count = reader.read_u16().await?;
             i += INDEX_COUNT_SIZE as u64;
 
             // Find the min time for the block
@@ -189,8 +231,8 @@ impl IndirectIndex {
             if i + 8 >= i_max {
                 return Err(anyhow!("indirectIndex: not enough data for min time"));
             }
-            accessor.seek(SeekFrom::Start(i)).await?;
-            let min_t = accessor.read_u64().await.map_err(|e| anyhow!(e))? as i64;
+            reader.seek(SeekFrom::Start(i)).await?;
+            let min_t = reader.read_u64().await? as i64;
             if min_t < min_time {
                 min_time = min_t;
             }
@@ -202,8 +244,8 @@ impl IndirectIndex {
             if i + 16 >= i_max {
                 return Err(anyhow!("indirectIndex: not enough data for max time"));
             }
-            accessor.seek(SeekFrom::Start(i + 8)).await?;
-            let max_t = accessor.read_u64().await.map_err(|e| anyhow!(e))? as i64;
+            reader.seek(SeekFrom::Start(i + 8)).await?;
+            let max_t = reader.read_u64().await? as i64;
             if max_t > max_time {
                 max_time = max_t
             }
@@ -212,12 +254,10 @@ impl IndirectIndex {
         }
 
         let first_ofs = offsets[0];
-        let (_, min_key) = read_key(accessor, first_ofs)
-            .await
-            .map_err(|e| anyhow!(e))?;
+        let (_, min_key) = read_key(reader, first_ofs).await?;
 
         let last_ofs = offsets[offsets.len() - 1];
-        let (_, max_key) = read_key(accessor, last_ofs).await.map_err(|e| anyhow!(e))?;
+        let (_, max_key) = read_key(reader, last_ofs).await?;
 
         Ok(Self {
             index_offset,
@@ -243,7 +283,7 @@ impl IndirectIndex {
 
         let mut key_buf: Vec<u8> = vec![];
         while left < right {
-            let mid = left + size / 2;
+            let mid = (left + right) / 2;
 
             let cmp = {
                 let offset = offsets[mid];
@@ -292,10 +332,7 @@ impl IndirectIndex {
             return Ok(None);
         }
 
-        let i = self
-            .binary_search(reader, offsets, key)
-            .await
-            .map_err(|e| anyhow!(e))?;
+        let i = self.binary_search(reader, offsets, key).await?;
         if i < 0 {
             return Ok(None);
         }
@@ -320,8 +357,7 @@ impl TSMIndex for IndirectIndex {
         let start = {
             let start = self
                 .binary_search(reader, offsets.as_slice(), &keys[0])
-                .await
-                .map_err(|e| anyhow!(e))?;
+                .await?;
             isize::abs(start) as usize
         };
         let mut key_index = 0;
@@ -334,7 +370,7 @@ impl TSMIndex for IndirectIndex {
             let offset = offsets[i];
             let del_key = keys[key_index];
 
-            let (_, key) = read_key(reader, offset).await.map_err(|e| anyhow!(e))?;
+            let (_, key) = read_key(reader, offset).await?;
 
             while key_index < keys.len() && del_key.cmp(key.as_slice()).is_lt() {
                 key_index += 1;
@@ -506,7 +542,7 @@ impl TSMIndex for IndirectIndex {
         key.cmp(self.min_key.as_slice()).is_ge() && key.cmp(self.max_key.as_slice()).is_le()
     }
 
-    async fn contains(&mut self, reader: &mut Reader, key: &[u8]) -> anyhow::Result<bool> {
+    async fn contains(&self, reader: &mut Reader, key: &[u8]) -> anyhow::Result<bool> {
         // let mut entries = IndexEntries::default();
         // self.entries(key, &mut entries).await?;
         // Ok(entries.entries.len() > 0)
@@ -516,29 +552,6 @@ impl TSMIndex for IndirectIndex {
         let offsets = offsets.read().await;
         let offset_index = self.search_offset(reader, offsets.as_slice(), key).await?;
         Ok(offset_index.is_some())
-    }
-
-    async fn contains_value(
-        &self,
-        reader: &mut Reader,
-        key: &[u8],
-        timestamp: i64,
-    ) -> anyhow::Result<bool> {
-        let entry = self.entry(reader, key, timestamp).await?;
-        if entry.is_none() {
-            return Ok(false);
-        }
-
-        let tombstones = self.tombstones.read().await;
-        let tombstone = tombstones.get(key);
-        if let Some(tombstone) = tombstone {
-            for t in tombstone {
-                if t.min <= timestamp && t.max >= timestamp {
-                    return Ok(false);
-                }
-            }
-        }
-        Ok(true)
     }
 
     async fn entries(
@@ -564,7 +577,7 @@ impl TSMIndex for IndirectIndex {
         Ok(())
     }
 
-    // TODO optimization: 先读取完整entry集合，再时间过滤，复杂度较高
+    /// TODO optimization: 先读取完整entry集合，再时间过滤，复杂度较高
     async fn entry(
         &self,
         reader: &mut Reader,
@@ -594,7 +607,7 @@ impl TSMIndex for IndirectIndex {
         }
 
         let mut offset = offsets[index];
-        let (n, key) = read_key(reader, offset).await.map_err(|e| anyhow!(e))?;
+        let (n, key) = read_key(reader, offset).await?;
         offset += n as u64;
 
         let _ = read_entries(
@@ -619,11 +632,11 @@ impl TSMIndex for IndirectIndex {
         }
 
         let mut offset = offsets[index];
-        let (n, key) = read_key(reader, offset).await.map_err(|e| anyhow!(e))?;
+        let (n, key) = read_key(reader, offset).await?;
         offset += n as u64;
 
         reader.seek(SeekFrom::Start(offset)).await?;
-        let typ = reader.read_u8().await.map_err(|e| anyhow!(e))?;
+        let typ = reader.read_u8().await?;
 
         Ok(Some((key, typ)))
     }
@@ -631,6 +644,10 @@ impl TSMIndex for IndirectIndex {
     async fn key_count(&self) -> usize {
         let offsets = self.offsets.read().await;
         offsets.len()
+    }
+
+    async fn key_iterator(&self, reader: Reader) -> anyhow::Result<KeyIterator> {
+        KeyIterator::new(reader, self.index_offset, self.index_len).await
     }
 
     async fn seek(&self, reader: &mut Reader, key: &[u8]) -> anyhow::Result<u64> {
@@ -684,23 +701,19 @@ impl TSMIndex for IndirectIndex {
         let (n, _key) = read_key(reader, offset).await?;
 
         reader.seek(SeekFrom::Start(offset + n as u64)).await?;
-        let typ = reader.read_u8().await.map_err(|e| anyhow!(e))?;
+        let typ = reader.read_u8().await?;
         Ok(typ)
-    }
-
-    async fn close(&mut self) -> anyhow::Result<()> {
-        Ok(())
     }
 }
 
-async fn read_key(accessor: &mut Reader, index_offset: u64) -> io::Result<(u16, Vec<u8>)> {
-    accessor.seek(SeekFrom::Start(index_offset)).await?;
-    let key_len = accessor.read_u16().await?;
+async fn read_key(reader: &mut Reader, index_offset: u64) -> io::Result<(u16, Vec<u8>)> {
+    reader.seek(SeekFrom::Start(index_offset)).await?;
+    let key_len = reader.read_u16().await?;
 
     let mut key = Vec::with_capacity(key_len as usize);
     key.resize(key_len as usize, 0);
 
-    let n = accessor.read(&mut key).await?;
+    let n = reader.read(&mut key).await?;
     if n != key_len as usize {
         return Err(io::Error::new(
             ErrorKind::InvalidData,
@@ -712,37 +725,34 @@ async fn read_key(accessor: &mut Reader, index_offset: u64) -> io::Result<(u16, 
 }
 
 async fn read_entries(
-    accessor: &mut Reader,
+    reader: &mut Reader,
     mut offset: u64,
     max_offset: u64,
     entries: &mut IndexEntries,
 ) -> anyhow::Result<u64> {
     // check space: | type(1B) | count(2B) |
-    if max_offset - offset < (1 + INDEX_COUNT_SIZE) as u64 {
+    if max_offset - offset < (INDEX_TYPE_SIZE + INDEX_COUNT_SIZE) as u64 {
         return Err(anyhow!("readEntries: data too short for headers"));
     }
 
     // 1 byte block type
-    accessor.seek(SeekFrom::Start(offset)).await?;
-    let typ = accessor.read_u8().await.map_err(|e| anyhow!(e))?;
+    reader.seek(SeekFrom::Start(offset)).await?;
+    let typ = reader.read_u8().await?;
     entries.set_block_type(typ);
     offset += 1;
 
     // 2 byte count of index entries
-    let count = accessor.read_u16().await.map_err(|e| anyhow!(e))? as usize;
+    let count = reader.read_u16().await? as usize;
     offset += 2;
 
     entries.clear_with_cap(count);
 
     let mut entry_buf = [0_u8; INDEX_ENTRY_SIZE];
     for _ in 0..count {
-        accessor
-            .read(&mut entry_buf)
-            .await
-            .map_err(|e| anyhow!(e))?;
+        reader.read(&mut entry_buf).await?;
         offset += INDEX_ENTRY_SIZE as u64;
 
-        let entry = IndexEntry::unmarshal_binary(&entry_buf)?;
+        let entry = IndexEntry::read_from(&entry_buf)?;
         entries.push(entry);
     }
 

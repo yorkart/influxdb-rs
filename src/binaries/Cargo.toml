@@ -3,9 +3,9 @@ name = "influxdb-binaries"
 version = "0.1.0"
 edition = "2021"
 
-[dependencies.influxdb-common]
+[dependencies.common-base]
 version = "0.1.0"
-path = "../common"
+path = "../common/base"
 
 [dependencies.influxdb-tsdb]
 version = "0.1.0"
@@ -24,5 +24,11 @@ tokio = { version = "1", features = ["full"] }
 [[bin]]
 name = "influxdb-tsdb-series"
 path = "tsdb_series/main.rs"
+doctest = false
+test = false
+
+[[bin]]
+name = "influxdb-tsdb-tsm"
+path = "tsdb_tsm/main.rs"
 doctest = false
 test = false
