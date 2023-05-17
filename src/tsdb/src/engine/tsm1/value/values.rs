@@ -4,82 +4,7 @@ use crate::engine::tsm1::block::decoder::{
     decode_bool_block, decode_float_block, decode_integer_block, decode_string_block,
     decode_unsigned_block,
 };
-use crate::engine::tsm1::block::{
-    BLOCK_BOOLEAN, BLOCK_FLOAT64, BLOCK_INTEGER, BLOCK_STRING, BLOCK_UNSIGNED,
-};
-
-#[derive(Debug, Clone, PartialEq, PartialOrd)]
-pub struct Value<T>
-where
-    T: Debug + Send + Clone + PartialOrd + PartialEq,
-{
-    pub unix_nano: i64,
-    pub value: T,
-}
-
-impl<T> Value<T>
-where
-    T: Debug + Send + Clone + PartialOrd + PartialEq,
-{
-    pub fn new(unix_nano: i64, value: T) -> Self {
-        Self { unix_nano, value }
-    }
-}
-
-pub trait TypeEncoder: Debug + Send + Clone + PartialOrd + PartialEq {
-    fn block_type() -> u8;
-    fn encode_size(&self) -> usize;
-}
-
-impl TypeEncoder for Value<f64> {
-    fn block_type() -> u8 {
-        BLOCK_FLOAT64
-    }
-
-    fn encode_size(&self) -> usize {
-        16
-    }
-}
-
-impl TypeEncoder for Value<i64> {
-    fn block_type() -> u8 {
-        BLOCK_INTEGER
-    }
-
-    fn encode_size(&self) -> usize {
-        16
-    }
-}
-
-impl TypeEncoder for Value<u64> {
-    fn block_type() -> u8 {
-        BLOCK_UNSIGNED
-    }
-
-    fn encode_size(&self) -> usize {
-        16
-    }
-}
-
-impl TypeEncoder for Value<bool> {
-    fn block_type() -> u8 {
-        BLOCK_BOOLEAN
-    }
-
-    fn encode_size(&self) -> usize {
-        9
-    }
-}
-
-impl TypeEncoder for Value<Vec<u8>> {
-    fn block_type() -> u8 {
-        BLOCK_STRING
-    }
-
-    fn encode_size(&self) -> usize {
-        8 + self.value.len()
-    }
-}
+use crate::engine::tsm1::value::value::{TValue, Value};
 
 pub trait TValues {
     fn min_time(&self) -> i64;
@@ -102,7 +27,7 @@ pub type TypeValues<T> = Vec<Value<T>>;
 impl<T> TValues for TypeValues<T>
 where
     T: Debug + Send + Clone + PartialOrd + PartialEq,
-    Value<T>: TypeEncoder,
+    Value<T>: TValue,
 {
     fn min_time(&self) -> i64 {
         self[0].unix_nano
@@ -317,6 +242,59 @@ pub enum Values {
     Bool(BooleanValues),
     String(StringValues),
     Unsigned(UnsignedValues),
+}
+
+impl Into<FloatValues> for Values {
+    fn into(self) -> FloatValues {
+        match self {
+            Self::Float(values) => values,
+            _ => panic!("xx"),
+        }
+    }
+}
+
+impl Into<IntegerValues> for Values {
+    fn into(self) -> IntegerValues {
+        match self {
+            Self::Integer(values) => values,
+            _ => panic!("xx"),
+        }
+    }
+}
+
+impl TryFrom<(u8, &[u8])> for Values {
+    type Error = anyhow::Error;
+
+    fn try_from((typ, block): (u8, &[u8])) -> Result<Self, Self::Error> {
+        match typ {
+            0 => {
+                let mut values: TypeValues<f64> = Vec::with_capacity(0);
+                values.decode(block)?;
+                Ok(Values::Float(values))
+            }
+            1 => {
+                let mut values: TypeValues<i64> = Vec::with_capacity(0);
+                values.decode(block)?;
+                Ok(Values::Integer(values))
+            }
+            2 => {
+                let mut values: TypeValues<bool> = Vec::with_capacity(0);
+                values.decode(block)?;
+                Ok(Values::Bool(values))
+            }
+            3 => {
+                let mut values: TypeValues<Vec<u8>> = Vec::with_capacity(0);
+                values.decode(block)?;
+                Ok(Values::String(values))
+            }
+            4 => {
+                let mut values: TypeValues<u64> = Vec::with_capacity(0);
+                values.decode(block)?;
+                Ok(Values::Unsigned(values))
+            }
+            _ => Err(anyhow!("unsupported type {}", typ)),
+        }
+    }
 }
 
 impl Values {

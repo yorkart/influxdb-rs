@@ -7,7 +7,6 @@ use influxdb_storage::StorageOperator;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::RwLock;
 
-use crate::engine::tsm1::encoding::BlockDecoder;
 use crate::engine::tsm1::file_store::index::{IndexEntries, IndexEntry};
 use crate::engine::tsm1::file_store::reader::batch_deleter::BatchDeleter;
 use crate::engine::tsm1::file_store::reader::block_iterator::{
@@ -20,6 +19,7 @@ use crate::engine::tsm1::file_store::tombstone::{
     IndexTombstonerFilter, TombstoneStat, Tombstoner,
 };
 use crate::engine::tsm1::file_store::{KeyRange, TimeRange, MAGIC_NUMBER, VERSION};
+use crate::engine::tsm1::value::values::BlockDecoder;
 
 /// TSMFile represents an on-disk TSM file.
 #[async_trait]

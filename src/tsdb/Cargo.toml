@@ -9,9 +9,6 @@ name = "influxdb_tsdb"
 [dependencies.common-base]
 version = "0.1.0"
 path = "../common/base"
-[dependencies.influxdb-query]
-version = "0.1.0"
-path = "../query"
 [dependencies.influxdb-storage]
 version = "0.1.0"
 path = "../storage"

@@ -7,6 +7,7 @@ use influxdb_tsdb::engine::tsm1::block::BLOCK_FLOAT64;
 use influxdb_tsdb::engine::tsm1::file_store::index::IndexEntries;
 use influxdb_tsdb::engine::tsm1::file_store::reader::tsm_reader::new_default_tsm_reader;
 use influxdb_tsdb::engine::tsm1::file_store::reader::tsm_reader::TSMReader;
+use influxdb_tsdb::engine::tsm1::value::FloatValues;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -37,8 +38,9 @@ async fn main() -> anyhow::Result<()> {
     // value iterator
     {
         if typ == BLOCK_FLOAT64 {
-            let mut v_itr = b.build_f64(key.as_bytes()).await?;
+            let mut v_itr = b.build(key.as_bytes()).await?;
             while let Some(values) = v_itr.try_next().await? {
+                let values = Into::<FloatValues>::into(values);
                 for v in values {
                     println!("| {} | {:.2}|", v.unix_nano, v.value);
                 }

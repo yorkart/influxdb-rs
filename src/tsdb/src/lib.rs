@@ -8,6 +8,7 @@ extern crate lazy_static;
 // pub mod cache;
 pub mod common;
 pub mod engine;
+pub mod field;
 pub mod index;
 pub mod meta;
 pub mod series;
