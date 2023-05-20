@@ -27,10 +27,23 @@
 //     }
 // }
 
+pub trait TryIterator {
+    type Item;
+    fn try_next(&mut self) -> anyhow::Result<Option<Self::Item>>;
+}
+
 #[async_trait]
 pub trait AsyncIterator {
     type Item;
     async fn try_next(&mut self) -> anyhow::Result<Option<Self::Item>>;
+}
+
+#[async_trait]
+pub trait RefAsyncIterator {
+    type Item<'a>
+    where
+        Self: 'a;
+    async fn try_next<'a>(&'a mut self) -> anyhow::Result<Option<Self::Item<'a>>>;
 }
 
 pub struct AsyncIterators<ITEM, ITR>

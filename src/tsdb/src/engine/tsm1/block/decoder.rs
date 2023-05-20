@@ -1,6 +1,10 @@
-use std::any::Any;
 use std::fmt::Debug;
 use std::marker::PhantomData;
+use std::sync::Arc;
+
+use common_arrow::arrow::array::{Array, MutableArray};
+use common_arrow::FloatValuesVec;
+use common_base::iterator::TryIterator;
 
 use crate::engine::tsm1::block::ENCODED_BLOCK_HEADER_SIZE;
 use crate::engine::tsm1::block::{
@@ -287,127 +291,124 @@ pub fn block_count(block: &[u8]) -> anyhow::Result<usize> {
     timestamp::count_timestamps(tb)
 }
 
-pub trait Iterable {
-    fn as_any(&self) -> &dyn Any;
-    fn as_any_mut(&mut self) -> &mut dyn Any;
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+pub struct FloatValueIterator<'a> {
+    ts_dec: TimeDecoder<'a>,
+    v_dec: FloatDecoder<'a>,
+    sz: usize,
 }
 
-// macro implementing common methods of trait `Array`
-macro_rules! impl_common_array {
-    () => {
-        #[inline]
-        fn as_any(&self) -> &dyn std::any::Any {
-            self
-        }
-
-        #[inline]
-        fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-            self
-        }
-    };
-}
-
-pub trait Iterator: Iterable {
-    type Item;
-
-    fn try_next(&mut self) -> anyhow::Result<Option<Self::Item>>;
-}
-
-pub type TimeIterator<'a> = ValueIterator<'a, i64, TimeDecoder<'a>>;
-pub type FloatIterator<'a> = ValueIterator<'a, f64, FloatDecoder<'a>>;
-pub type IntegerIterator<'a> = ValueIterator<'a, i64, IntegerDecoder<'a>>;
-pub type BooleanIterator<'a> = ValueIterator<'a, bool, BooleanDecoder<'a>>;
-pub type StringIterator = ValueIterator<'static, Vec<u8>, StringDecoder>;
-pub type UnsignedIterator<'a> = ValueIterator<'a, u64, UnsignedDecoder<'a>>;
-
-impl<'a> Iterable for TimeIterator<'a> {
-    impl_common_array!();
-}
-
-impl<'a> Iterator for TimeIterator<'a> {
-    type Item = Value<i64>;
-
-    fn try_next(&mut self) -> anyhow::Result<Option<Self::Item>> {
-        self.try_next()
+impl<'a> FloatValueIterator<'a> {
+    pub fn new(block: &'a [u8]) -> anyhow::Result<Self> {
+        let (tb, vb, sz) = pre_decode(block, BLOCK_FLOAT64)?;
+        let ts_dec = TimeDecoder::new(tb)?;
+        let v_dec = FloatDecoder::new(vb)?;
+        Ok(Self { ts_dec, v_dec, sz })
     }
 }
 
-impl<'a> Iterable for FloatIterator<'a> {
-    impl_common_array!();
-}
-
-impl<'a> Iterator for FloatIterator<'a> {
+impl<'a> TryIterator for FloatValueIterator<'a> {
     type Item = Value<f64>;
 
     fn try_next(&mut self) -> anyhow::Result<Option<Self::Item>> {
-        self.try_next()
+        if self.sz == 0 {
+            return Ok(None);
+        }
+
+        if !self.ts_dec.next() {
+            return Err(anyhow!("can not read all timestamp block"));
+        }
+        if let Some(err) = self.ts_dec.err() {
+            return Err(anyhow!("read timestamp block error: {}", err.to_string()));
+        }
+
+        if !self.v_dec.next() {
+            return Err(anyhow!("can not read all values block"));
+        }
+        if let Some(err) = self.v_dec.err() {
+            return Err(anyhow!("read values block error: {}", err.to_string()));
+        }
+
+        self.sz -= 1;
+        Ok(Some(Value::new(self.ts_dec.read(), self.v_dec.read())))
     }
 }
 
-impl<'a> Iterable for IntegerIterator<'a> {
-    impl_common_array!();
+pub enum FiledIterator<'a> {
+    FloatIterator(FloatIterator<'a>),
+    IntegerIterator(IntegerIterator<'a>),
+    BooleanIterator(BooleanIterator<'a>),
+    StringIterator(StringIterator),
+    UnsignedIterator(UnsignedIterator<'a>),
 }
 
-impl<'a> Iterator for IntegerIterator<'a> {
-    type Item = Value<i64>;
-
-    fn try_next(&mut self) -> anyhow::Result<Option<Self::Item>> {
-        self.try_next()
+impl<'a> FiledIterator<'a> {
+    pub fn new(typ: u8, buf: &'a [u8], sz: usize) -> anyhow::Result<FiledIterator<'a>> {
+        match typ {
+            BLOCK_FLOAT64 => {
+                let dec = FloatDecoder::new(buf)?;
+                Ok(FiledIterator::FloatIterator(FloatIterator::new(dec, sz)))
+            }
+            BLOCK_INTEGER => {
+                let dec = IntegerDecoder::new(buf)?;
+                Ok(FiledIterator::IntegerIterator(IntegerIterator::new(
+                    dec, sz,
+                )))
+            }
+            BLOCK_BOOLEAN => {
+                let dec = BooleanDecoder::new(buf)?;
+                Ok(FiledIterator::BooleanIterator(BooleanIterator::new(
+                    dec, sz,
+                )))
+            }
+            BLOCK_STRING => {
+                let dec = StringDecoder::new(buf)?;
+                Ok(FiledIterator::StringIterator(StringIterator::new(dec, sz)))
+            }
+            BLOCK_UNSIGNED => {
+                let dec = UnsignedDecoder::new(buf)?;
+                Ok(FiledIterator::UnsignedIterator(UnsignedIterator::new(
+                    dec, sz,
+                )))
+            }
+            _ => Err(anyhow!("unknown type {}", typ)),
+        }
     }
 }
 
-impl<'a> Iterable for BooleanIterator<'a> {
-    impl_common_array!();
+pub trait BatchBuilder {
+    type Item;
+
+    fn next(&mut self) -> anyhow::Result<bool>;
+    fn fill_value(&mut self) -> anyhow::Result<Option<Self::Item>>;
+    fn fill_null(&mut self);
+    fn build(&mut self) -> Arc<dyn Array>;
 }
 
-impl<'a> Iterator for BooleanIterator<'a> {
-    type Item = Value<bool>;
+pub type TimeIterator<'a> = ValueIterator<i64, TimeDecoder<'a>>;
+pub type FloatIterator<'a> = ValueIterator<f64, FloatDecoder<'a>>;
+pub type IntegerIterator<'a> = ValueIterator<i64, IntegerDecoder<'a>>;
+pub type BooleanIterator<'a> = ValueIterator<bool, BooleanDecoder<'a>>;
+pub type StringIterator = ValueIterator<Vec<u8>, StringDecoder>;
+pub type UnsignedIterator<'a> = ValueIterator<u64, UnsignedDecoder<'a>>;
 
-    fn try_next(&mut self) -> anyhow::Result<Option<Self::Item>> {
-        self.try_next()
-    }
-}
-
-impl Iterable for StringIterator {
-    impl_common_array!();
-}
-
-impl<'a> Iterator for StringIterator {
-    type Item = Value<Vec<u8>>;
-
-    fn try_next(&mut self) -> anyhow::Result<Option<Self::Item>> {
-        self.try_next()
-    }
-}
-
-impl<'a> Iterable for UnsignedIterator<'a> {
-    impl_common_array!();
-}
-
-impl<'a> Iterator for UnsignedIterator<'a> {
-    type Item = Value<u64>;
-
-    fn try_next(&mut self) -> anyhow::Result<Option<Self::Item>> {
-        self.try_next()
-    }
-}
-
-pub struct ValueIterator<'a, T, D>
+pub struct ValueIterator<T, D>
 where
     T: Debug + Send + Clone + PartialOrd + PartialEq,
     Value<T>: TValue,
-    D: Decoder<T> + 'a,
+    D: Decoder<T>,
 {
     v_dec: D,
     sz: usize,
     _pd: PhantomData<T>,
 }
 
-impl<'a, T, D> ValueIterator<'a, T, D>
+impl<T, D> ValueIterator<T, D>
 where
     T: Debug + Send + Clone + PartialOrd + PartialEq,
     Value<T>: TValue,
-    D: Decoder<T> + 'a,
+    D: Decoder<T>,
 {
     pub fn new(v_dec: D, sz: usize) -> Self {
         Self {
@@ -418,13 +419,13 @@ where
     }
 }
 
-impl<'a, T, D> ValueIterator<'a, T, D>
+impl<T, D> ValueIterator<T, D>
 where
     T: Debug + Send + Clone + PartialOrd + PartialEq,
     Value<T>: TValue,
-    D: Decoder<T> + 'a,
+    D: Decoder<T>,
 {
-    pub fn try_next(&mut self) -> anyhow::Result<Option<Value<T>>> {
+    pub fn try_next(&mut self) -> anyhow::Result<Option<T>> {
         if self.sz == 0 {
             return Ok(None);
         }
@@ -437,6 +438,81 @@ where
         }
 
         self.sz -= 1;
-        Ok(Some(Value::new(self.ts_dec.read(), self.v_dec.read())))
+        Ok(Some(self.v_dec.read()))
+    }
+
+    pub fn fill_null(&mut self) {
+        todo!()
+    }
+}
+
+pub struct FloatValueBuilder<'a> {
+    v_dec: FloatDecoder<'a>,
+    sz: usize,
+
+    buf: Option<FloatValuesVec>,
+    val: Option<f64>,
+}
+
+impl<'a> FloatValueBuilder<'a> {
+    pub fn new(v_dec: FloatDecoder<'a>, sz: usize) -> Self {
+        Self {
+            v_dec,
+            sz,
+            buf: None,
+            val: None,
+        }
+    }
+}
+
+impl<'a> FloatValueBuilder<'a> {
+    pub fn next(&mut self) -> anyhow::Result<bool> {
+        if self.sz == 0 {
+            self.val = None;
+            return Ok(false);
+        }
+
+        if !self.v_dec.next() {
+            return Err(anyhow!("can not read all values block"));
+        }
+        if let Some(err) = self.v_dec.err() {
+            return Err(anyhow!("read values block error: {}", err.to_string()));
+        }
+
+        self.sz -= 1;
+        self.val = Some(self.v_dec.read());
+
+        Ok(true)
+    }
+
+    pub fn value(&self) -> Option<f64> {
+        self.val
+    }
+
+    pub fn fill_value(&mut self) -> anyhow::Result<()> {
+        let val = self.val.take();
+        if val.is_none() {
+            return Err(anyhow!("value not found"));
+        }
+
+        if self.buf.is_none() {
+            self.buf = Some(FloatValuesVec::with_capacity(self.sz));
+        }
+
+        self.buf.as_mut().map(|x| x.push(val));
+
+        Ok(())
+    }
+
+    pub fn fill_null(&mut self) {
+        if self.buf.is_none() {
+            self.buf = Some(FloatValuesVec::with_capacity(self.sz));
+        }
+
+        self.buf.as_mut().map(|x| x.push_null());
+    }
+
+    pub fn build(&mut self) -> Option<Arc<dyn Array>> {
+        self.buf.take().map(|x| x.into_arc())
     }
 }
