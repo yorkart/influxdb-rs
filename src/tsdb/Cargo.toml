@@ -9,6 +9,9 @@ name = "influxdb_tsdb"
 [dependencies.common-base]
 version = "0.1.0"
 path = "../common/base"
+[dependencies.common-arrow]
+version = "0.1.0"
+path = "../common/arrow"
 [dependencies.influxdb-storage]
 version = "0.1.0"
 path = "../storage"
@@ -28,6 +31,7 @@ anyhow = "1.0"
 thiserror = "1.0"
 ordered-float = { version = "3.0", default-features = false }
 filepath = "0.1"
+dyn-clone = "1"
 
 murmur3 = "0.5"
 crc32fast = "1.3"
