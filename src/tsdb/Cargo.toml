@@ -58,6 +58,8 @@ protobuf = { version = "3" }
 rand = "0.8"
 quickcheck = "1"
 tempfile = "3.5"
+clap = { version = "4.2", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
 
 [build-dependencies]
 protobuf-codegen = "3"

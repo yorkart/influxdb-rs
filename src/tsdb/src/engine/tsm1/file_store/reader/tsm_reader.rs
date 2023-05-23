@@ -168,11 +168,10 @@ where
 
     /// last_modified is the last time this file was modified on disk
     last_modified: i64,
-
-    /// Counter incremented everytime the mmapAccessor is accessed
-    access_count: AtomicU64,
-    /// Counter to determine whether the accessor can free its resources
-    free_count: AtomicU64,
+    // /// Counter incremented everytime the mmapAccessor is accessed
+    // access_count: AtomicU64,
+    // /// Counter to determine whether the accessor can free its resources
+    // free_count: AtomicU64,
 }
 
 impl DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
@@ -218,8 +217,8 @@ impl DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
             tombstoner: RwLock::new(tombstoner),
             size: 0,
             last_modified,
-            access_count: AtomicU64::new(0),
-            free_count: AtomicU64::new(0),
+            // access_count: AtomicU64::new(0),
+            // free_count: AtomicU64::new(0),
         })
     }
 

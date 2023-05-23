@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use common_arrow::arrow::array::Array;
+use common_arrow::arrow::chunk::Chunk;
 use common_base::iterator::AsyncIterator;
-use common_base::point::{series_field_key, KEY_FIELD_SEPARATOR};
+use common_base::point::series_field_key;
 use influxdb_storage::opendal::Reader;
 use tokio::sync::Mutex;
 
@@ -11,8 +12,8 @@ use crate::engine::tsm1::file_store::reader::block_itr::array_builder::{
     ArrayBuilder, FloatArrayBuilder,
 };
 use crate::engine::tsm1::file_store::reader::block_itr::block_iterator::BlockIterator;
+use crate::engine::tsm1::file_store::reader::block_itr::columns_iterator::FieldsBatchIterator;
 use crate::engine::tsm1::file_store::reader::block_itr::field_iterator::FloatFieldIterator;
-use crate::engine::tsm1::file_store::reader::block_itr::fields_batch_iterator::FieldsBatchIterator;
 use crate::engine::tsm1::file_store::reader::block_reader::TSMBlock;
 use crate::engine::tsm1::file_store::reader::index_reader::TSMIndex;
 use crate::engine::tsm1::file_store::reader::tsm_reader::ShareTSMReaderInner;
@@ -23,7 +24,7 @@ pub trait AsyncIteratorBuilder: Send + Sync {
         &mut self,
         series: &[u8],
         fields: &[&[u8]],
-    ) -> anyhow::Result<Box<dyn AsyncIterator<Item = Vec<Arc<dyn Array>>>>>;
+    ) -> anyhow::Result<Box<dyn AsyncIterator<Item = Chunk<Arc<dyn Array>>>>>;
 }
 
 pub struct BlockIteratorBuilder<B, I>
@@ -68,11 +69,11 @@ where
         &mut self,
         key: &[u8],
         fields: &[&[u8]],
-    ) -> anyhow::Result<Box<dyn AsyncIterator<Item = Vec<Arc<dyn Array>>>>> {
+    ) -> anyhow::Result<Box<dyn AsyncIterator<Item = Chunk<Arc<dyn Array>>>>> {
         let mut builders = Vec::with_capacity(fields.len());
 
         for field in fields {
-            let mut key = series_field_key(key, field);
+            let key = series_field_key(key, field);
 
             let entries = self.entries(key.as_slice()).await?;
             let typ = entries.typ;

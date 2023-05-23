@@ -2,6 +2,7 @@ use std::cmp::min;
 use std::sync::Arc;
 
 use common_arrow::arrow::array::{Array, MutableArray};
+use common_arrow::arrow::chunk::Chunk;
 use common_arrow::TimestampsVec;
 use common_base::iterator::AsyncIterator;
 
@@ -35,7 +36,7 @@ impl FieldsBatchIterator {
 
 #[async_trait]
 impl AsyncIterator for FieldsBatchIterator {
-    type Item = Vec<Arc<dyn Array>>;
+    type Item = Chunk<Arc<dyn Array>>;
 
     async fn try_next(&mut self) -> anyhow::Result<Option<Self::Item>> {
         if self.finish {
@@ -89,6 +90,6 @@ impl AsyncIterator for FieldsBatchIterator {
             fields_array.push(array);
         });
 
-        Ok(Some(fields_array))
+        Ok(Some(Chunk::new(fields_array)))
     }
 }

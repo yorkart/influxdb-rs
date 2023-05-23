@@ -56,7 +56,7 @@ where
         let next_value = self.itr.try_next().await?;
         self.cur = next_value;
 
-        Ok(self.cur.as_ref().map(|x| ()))
+        Ok(self.cur.as_ref().map(|_x| ()))
     }
 
     fn next_time(&self) -> Option<i64> {
