@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
+use common_arrow::arrow::array::Array;
+use common_arrow::FloatValuesVec;
 use common_base::iterator::{AsyncIterator, RefAsyncIterator};
 use influxdb_storage::opendal::Reader;
 use tokio::sync::Mutex;
 
-use crate::engine::tsm1::block::decoder::FloatValueIterator;
 use crate::engine::tsm1::file_store::index::IndexEntries;
 use crate::engine::tsm1::file_store::reader::block_reader::TSMBlock;
 use crate::engine::tsm1::file_store::reader::index_reader::TSMIndex;
@@ -102,7 +103,7 @@ where
         entries: IndexEntries,
         reader: Arc<Mutex<Reader>>,
         inner: ShareTSMReaderInner<I, B>,
-    ) -> anyhow::Result<BlockIterator2<B, I>> {
+    ) -> anyhow::Result<BlockIterator<B, I>> {
         Ok(Self {
             entries,
             i: 0,
@@ -144,7 +145,7 @@ where
     B: TSMBlock,
     I: TSMIndex,
 {
-    block_itr: BlockIterator2<B, I>,
+    block_itr: BlockIterator<B, I>,
 
     values: FloatValues,
     step: usize,
@@ -155,7 +156,7 @@ where
     B: TSMBlock,
     I: TSMIndex,
 {
-    pub fn new(block_itr: BlockIterator2<B, I>) -> Self {
+    pub fn new(block_itr: BlockIterator<B, I>) -> Self {
         Self {
             block_itr,
             values: vec![],
@@ -189,5 +190,73 @@ where
         self.step += 1;
 
         Ok(Some(v))
+    }
+}
+
+#[async_trait]
+pub trait ArrayBuilder {
+    async fn next_time(&mut self) -> anyhow::Result<Option<i64>>;
+    fn fill_value(&mut self) -> anyhow::Result<()>;
+    fn fill_null(&mut self);
+    fn build(&mut self) -> Arc<dyn Array>;
+}
+
+pub struct FloatArrayBuilder<B, I>
+where
+    B: TSMBlock,
+    I: TSMIndex,
+{
+    capacity: usize,
+
+    itr: FloatFieldIterator<B, I>,
+    cur: Option<Value<f64>>,
+
+    buf: Option<FloatValuesVec>,
+}
+
+impl<B, I> FloatArrayBuilder<B, I>
+where
+    B: TSMBlock,
+    I: TSMIndex,
+{
+    pub fn new(itr: FloatFieldIterator<B, I>, capacity: usize) -> Self {
+        Self {
+            capacity,
+            itr,
+            cur: None,
+            buf: Some(FloatValuesVec::with_capacity(capacity)),
+        }
+    }
+}
+
+#[async_trait]
+impl<B, I> ArrayBuilder for FloatArrayBuilder<B, I>
+where
+    B: TSMBlock,
+    I: TSMIndex,
+{
+    async fn next_time(&mut self) -> anyhow::Result<Option<i64>> {
+        let next_value = self.itr.try_next().await?;
+        self.cur = next_value;
+        Ok(self.cur.map(|x| x.unix_nano))
+    }
+
+    fn fill_value(&mut self) -> anyhow::Result<()> {
+        if let Some(v) = &self.cur {
+            self.buf.as_mut().unwrap().push(Some(v.value));
+            Ok(())
+        } else {
+            Err(anyhow!("value not found"))
+        }
+    }
+
+    fn fill_null(&mut self) {
+        self.buf.as_mut().unwrap().push(None);
+    }
+
+    fn build(&mut self) -> Arc<dyn Array> {
+        let array = self.buf.take().unwrap();
+        self.buf = Some(FloatValuesVec::with_capacity(self.capacity));
+        array.into_arc()
     }
 }

@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 
 use crate::engine::tsm1::file_store::index::{IndexEntries, IndexEntry};
 use crate::engine::tsm1::file_store::reader::batch_deleter::BatchDeleter;
-use crate::engine::tsm1::file_store::reader::block_iterator::{
+use crate::engine::tsm1::file_store::reader::block_itr::iterator_builder::{
     AsyncIteratorBuilder, BlockIteratorBuilder,
 };
 use crate::engine::tsm1::file_store::reader::block_reader::{DefaultBlockAccessor, TSMBlock};

@@ -33,7 +33,7 @@ pub trait TryIterator {
 }
 
 #[async_trait]
-pub trait AsyncIterator {
+pub trait AsyncIterator: Send {
     type Item;
     async fn try_next(&mut self) -> anyhow::Result<Option<Self::Item>>;
 }

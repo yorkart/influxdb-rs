@@ -2,6 +2,7 @@ use std::str::from_utf8_unchecked;
 
 use clap::Parser;
 use common_base::iterator::AsyncIterator;
+use common_base::point::series_field_key;
 use influxdb_storage::StorageOperator;
 use influxdb_tsdb::engine::tsm1::block::BLOCK_FLOAT64;
 use influxdb_tsdb::engine::tsm1::file_store::index::IndexEntries;
@@ -31,14 +32,28 @@ async fn main() -> anyhow::Result<()> {
     let tsm_reader = new_default_tsm_reader(op).await?;
     let mut b = tsm_reader.block_iterator_builder().await?;
 
-    let key = "cpu,host=server-09,region=uswest-00#!~#value";
-    let typ = tsm_reader.block_type(key.as_bytes()).await?;
-    println!("{}", typ);
+    let series = "cpu,host=server-09,region=uswest-00".as_bytes();
+    let fields = vec!["value".as_bytes()];
+
+    for field in fields.as_slice() {
+        let key = series_field_key(series, field);
+        let typ = tsm_reader.block_type(key.as_slice()).await?;
+
+        let key = unsafe { from_utf8_unchecked(key.as_slice()) };
+        println!("{}: {}", key, typ);
+    }
+
+    let mut v_itr = b.build(series, fields.as_slice()).await?;
+    while let Some(values) = v_itr.try_next().await? {
+        for v in values {
+            println!("| {} | {:.2}|", v.unix_nano, v.value);
+        }
+    }
 
     // value iterator
     {
         if typ == BLOCK_FLOAT64 {
-            let mut v_itr = b.build(key.as_bytes()).await?;
+            let mut v_itr = b.build(series, fields.as_slice()).await?;
             while let Some(values) = v_itr.try_next().await? {
                 let values = Into::<FloatValues>::into(values);
                 for v in values {

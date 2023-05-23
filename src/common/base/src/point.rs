@@ -6,6 +6,18 @@ use std::str::from_utf8_unchecked;
 /// This time is not used by the query engine or the storage engine as a valid time.
 pub const ZERO_TIME: i64 = i64::MIN;
 
+/// keyFieldSeparator separates the series key from the field name in the composite key
+/// that identifies a specific field in series
+pub const KEY_FIELD_SEPARATOR: &'static str = "#!~#";
+
+pub fn series_field_key(series: &[u8], field: &[u8]) -> Vec<u8> {
+    let mut key = Vec::with_capacity(series.len() + KEY_FIELD_SEPARATOR.len() + field.len());
+    key.extend_from_slice(series);
+    key.extend_from_slice(KEY_FIELD_SEPARATOR.as_bytes());
+    key.extend_from_slice(field);
+    key
+}
+
 #[derive(Clone)]
 pub struct Tag {
     pub key: Vec<u8>,
