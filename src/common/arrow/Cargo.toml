@@ -7,5 +7,5 @@ edition = "2021"
 name = "common_arrow"
 
 [dependencies]
-arrow = {version = "0.17", package = "arrow2"}
-arrow-format = { version = "0.8.0", features = ["flight-data", "flight-service", "ipc"] }
+arrow = {version = "0.17", package = "arrow2", features = ["io_print"]}
+#arrow-format = { version = "0.8.0", features = ["flight-data", "flight-service", "ipc"] }
