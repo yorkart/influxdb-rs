@@ -3,17 +3,20 @@ use std::sync::Arc;
 
 use common_arrow::arrow::array::{Array, MutableArray};
 use common_arrow::arrow::chunk::Chunk;
+use common_arrow::arrow::datatypes::{DataType, TimeUnit};
 use common_arrow::TimestampsVec;
 use common_base::iterator::AsyncIterator;
 
 use crate::engine::tsm1::file_store::reader::block_itr::array_builder::ArrayBuilder;
+
+const TIMESTAMP_DATA_TYPE: DataType = DataType::Timestamp(TimeUnit::Nanosecond, None);
 
 pub struct FieldsBatchIterator {
     array_builders: Vec<Box<dyn ArrayBuilder>>,
     finish: bool,
 
     capacity: usize,
-    buf: Option<TimestampsVec>,
+    times: Option<TimestampsVec>,
 }
 
 impl FieldsBatchIterator {
@@ -29,7 +32,10 @@ impl FieldsBatchIterator {
             array_builders,
             finish: false,
             capacity,
-            buf: Some(TimestampsVec::with_capacity(capacity)),
+            times: Some(TimestampsVec::with_capacity_from(
+                capacity,
+                TIMESTAMP_DATA_TYPE.clone(),
+            )),
         })
     }
 }
@@ -67,15 +73,18 @@ impl AsyncIterator for FieldsBatchIterator {
                 }
             }
 
-            self.buf.as_mut().unwrap().push(Some(min_time));
+            self.times.as_mut().unwrap().push(Some(min_time));
         }
 
         let mut fields_array: Vec<Arc<dyn Array>> =
             Vec::with_capacity(self.array_builders.len() + 1);
 
-        let time_array = self.buf.take().unwrap();
+        let time_array = self.times.take().unwrap();
         let size = time_array.len();
-        self.buf = Some(TimestampsVec::with_capacity(self.capacity));
+        self.times = Some(TimestampsVec::with_capacity_from(
+            self.capacity,
+            TIMESTAMP_DATA_TYPE.clone(),
+        ));
         fields_array.push(time_array.into_arc());
 
         self.array_builders.iter_mut().for_each(|x| {
