@@ -1,8 +1,8 @@
 use common_base::iterator::{AsyncIterator, RefAsyncIterator};
 
-use crate::engine::tsm1::file_store::reader::block_itr::block_iterator::BlockIterator;
 use crate::engine::tsm1::file_store::reader::block_reader::TSMBlock;
 use crate::engine::tsm1::file_store::reader::index_reader::TSMIndex;
+use crate::engine::tsm1::file_store::reader::tsm_iterator::block_iterator::BlockIterator;
 use crate::engine::tsm1::value::values::BlockDecoder;
 use crate::engine::tsm1::value::{FloatValues, Value};
 

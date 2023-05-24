@@ -8,14 +8,14 @@ use influxdb_storage::opendal::Reader;
 use tokio::sync::Mutex;
 
 use crate::engine::tsm1::file_store::index::IndexEntries;
-use crate::engine::tsm1::file_store::reader::block_itr::array_builder::{
-    ArrayBuilder, FloatArrayBuilder,
-};
-use crate::engine::tsm1::file_store::reader::block_itr::block_iterator::BlockIterator;
-use crate::engine::tsm1::file_store::reader::block_itr::columns_iterator::FieldsBatchIterator;
-use crate::engine::tsm1::file_store::reader::block_itr::field_iterator::FloatFieldIterator;
 use crate::engine::tsm1::file_store::reader::block_reader::TSMBlock;
 use crate::engine::tsm1::file_store::reader::index_reader::TSMIndex;
+use crate::engine::tsm1::file_store::reader::tsm_iterator::array_builder::{
+    ArrayBuilder, FloatArrayBuilder,
+};
+use crate::engine::tsm1::file_store::reader::tsm_iterator::block_iterator::BlockIterator;
+use crate::engine::tsm1::file_store::reader::tsm_iterator::columns_iterator::FieldsBatchIterator;
+use crate::engine::tsm1::file_store::reader::tsm_iterator::field_iterator::FloatFieldIterator;
 use crate::engine::tsm1::file_store::reader::tsm_reader::ShareTSMReaderInner;
 
 #[async_trait]

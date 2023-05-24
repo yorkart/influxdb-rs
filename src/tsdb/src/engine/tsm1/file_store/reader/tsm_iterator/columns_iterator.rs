@@ -7,7 +7,7 @@ use common_arrow::arrow::datatypes::{DataType, TimeUnit};
 use common_arrow::TimestampsVec;
 use common_base::iterator::AsyncIterator;
 
-use crate::engine::tsm1::file_store::reader::block_itr::array_builder::ArrayBuilder;
+use crate::engine::tsm1::file_store::reader::tsm_iterator::array_builder::ArrayBuilder;
 
 const TIMESTAMP_DATA_TYPE: DataType = DataType::Timestamp(TimeUnit::Nanosecond, None);
 

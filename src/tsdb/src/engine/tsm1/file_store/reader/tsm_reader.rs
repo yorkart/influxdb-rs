@@ -9,11 +9,11 @@ use tokio::sync::RwLock;
 
 use crate::engine::tsm1::file_store::index::{IndexEntries, IndexEntry};
 use crate::engine::tsm1::file_store::reader::batch_deleter::BatchDeleter;
-use crate::engine::tsm1::file_store::reader::block_itr::iterator_builder::{
-    AsyncIteratorBuilder, BlockIteratorBuilder,
-};
 use crate::engine::tsm1::file_store::reader::block_reader::{DefaultBlockAccessor, TSMBlock};
 use crate::engine::tsm1::file_store::reader::index_reader::{IndirectIndex, KeyIterator, TSMIndex};
+use crate::engine::tsm1::file_store::reader::tsm_iterator::iterator_builder::{
+    AsyncIteratorBuilder, BlockIteratorBuilder,
+};
 use crate::engine::tsm1::file_store::stat::FileStat;
 use crate::engine::tsm1::file_store::tombstone::{
     IndexTombstonerFilter, TombstoneStat, Tombstoner,

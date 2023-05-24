@@ -4,9 +4,9 @@ use common_arrow::arrow::array::Array;
 use common_arrow::FloatValuesVec;
 use common_base::iterator::AsyncIterator;
 
-use crate::engine::tsm1::file_store::reader::block_itr::field_iterator::FloatFieldIterator;
 use crate::engine::tsm1::file_store::reader::block_reader::TSMBlock;
 use crate::engine::tsm1::file_store::reader::index_reader::TSMIndex;
+use crate::engine::tsm1::file_store::reader::tsm_iterator::field_iterator::FloatFieldIterator;
 use crate::engine::tsm1::value::Value;
 
 #[async_trait]
