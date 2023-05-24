@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use crate::engine::tsm1::block::{
     BLOCK_BOOLEAN, BLOCK_FLOAT64, BLOCK_INTEGER, BLOCK_STRING, BLOCK_UNSIGNED,
 };
@@ -9,8 +11,7 @@ use crate::engine::tsm1::codec::timestamp::TimeEncoder;
 use crate::engine::tsm1::codec::unsigned::UnsignedEncoder;
 use crate::engine::tsm1::codec::varint::VarInt;
 use crate::engine::tsm1::codec::{varint, Encoder};
-use crate::engine::tsm1::encoding::{Value, Values};
-use std::fmt::Debug;
+use crate::engine::tsm1::value::{Value, Values};
 
 pub fn encode_block(dst: &mut Vec<u8>, values: Values) -> anyhow::Result<()> {
     match values {

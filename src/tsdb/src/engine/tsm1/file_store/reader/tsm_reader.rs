@@ -7,19 +7,19 @@ use influxdb_storage::StorageOperator;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::RwLock;
 
-use crate::engine::tsm1::encoding::BlockDecoder;
 use crate::engine::tsm1::file_store::index::{IndexEntries, IndexEntry};
 use crate::engine::tsm1::file_store::reader::batch_deleter::BatchDeleter;
-use crate::engine::tsm1::file_store::reader::block_iterator::{
-    AsyncIteratorBuilder, BlockIteratorBuilder,
-};
 use crate::engine::tsm1::file_store::reader::block_reader::{DefaultBlockAccessor, TSMBlock};
 use crate::engine::tsm1::file_store::reader::index_reader::{IndirectIndex, KeyIterator, TSMIndex};
+use crate::engine::tsm1::file_store::reader::tsm_iterator::iterator_builder::{
+    AsyncIteratorBuilder, BlockIteratorBuilder,
+};
 use crate::engine::tsm1::file_store::stat::FileStat;
 use crate::engine::tsm1::file_store::tombstone::{
     IndexTombstonerFilter, TombstoneStat, Tombstoner,
 };
 use crate::engine::tsm1::file_store::{KeyRange, TimeRange, MAGIC_NUMBER, VERSION};
+use crate::engine::tsm1::value::values::BlockDecoder;
 
 /// TSMFile represents an on-disk TSM file.
 #[async_trait]
@@ -168,11 +168,10 @@ where
 
     /// last_modified is the last time this file was modified on disk
     last_modified: i64,
-
-    /// Counter incremented everytime the mmapAccessor is accessed
-    access_count: AtomicU64,
-    /// Counter to determine whether the accessor can free its resources
-    free_count: AtomicU64,
+    // /// Counter incremented everytime the mmapAccessor is accessed
+    // access_count: AtomicU64,
+    // /// Counter to determine whether the accessor can free its resources
+    // free_count: AtomicU64,
 }
 
 impl DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
@@ -218,8 +217,8 @@ impl DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
             tombstoner: RwLock::new(tombstoner),
             size: 0,
             last_modified,
-            access_count: AtomicU64::new(0),
-            free_count: AtomicU64::new(0),
+            // access_count: AtomicU64::new(0),
+            // free_count: AtomicU64::new(0),
         })
     }
 

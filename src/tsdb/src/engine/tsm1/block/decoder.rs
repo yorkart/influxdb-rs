@@ -1,4 +1,10 @@
 use std::fmt::Debug;
+use std::marker::PhantomData;
+use std::sync::Arc;
+
+use common_arrow::arrow::array::{Array, MutableArray};
+use common_arrow::FloatValuesVec;
+use common_base::iterator::TryIterator;
 
 use crate::engine::tsm1::block::ENCODED_BLOCK_HEADER_SIZE;
 use crate::engine::tsm1::block::{
@@ -12,9 +18,8 @@ use crate::engine::tsm1::codec::timestamp::TimeDecoder;
 use crate::engine::tsm1::codec::unsigned::UnsignedDecoder;
 use crate::engine::tsm1::codec::varint::VarInt;
 use crate::engine::tsm1::codec::{timestamp, Decoder};
-use crate::engine::tsm1::encoding::{
-    BooleanValues, FloatValues, IntegerValues, StringValues, TypeEncoder, UnsignedValues, Value,
-    Values,
+use crate::engine::tsm1::value::{
+    BooleanValues, FloatValues, IntegerValues, StringValues, TValue, UnsignedValues, Value, Values,
 };
 
 pub fn decode_block(block: &[u8], values: &mut Values) -> anyhow::Result<()> {
@@ -203,7 +208,7 @@ fn decode_block_using<T>(
 ) -> anyhow::Result<()>
 where
     T: Debug + Send + Clone + PartialOrd + PartialEq,
-    Value<T>: TypeEncoder,
+    Value<T>: TValue,
 {
     let remain = values.capacity() - values.len();
     if remain < sz {
@@ -284,4 +289,230 @@ pub fn block_count(block: &[u8]) -> anyhow::Result<usize> {
 
     let (_typ, tb, _vb) = unpack_block(block)?;
     timestamp::count_timestamps(tb)
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+pub struct FloatValueIterator<'a> {
+    ts_dec: TimeDecoder<'a>,
+    v_dec: FloatDecoder<'a>,
+    sz: usize,
+}
+
+impl<'a> FloatValueIterator<'a> {
+    pub fn new(block: &'a [u8]) -> anyhow::Result<Self> {
+        let (tb, vb, sz) = pre_decode(block, BLOCK_FLOAT64)?;
+        let ts_dec = TimeDecoder::new(tb)?;
+        let v_dec = FloatDecoder::new(vb)?;
+        Ok(Self { ts_dec, v_dec, sz })
+    }
+}
+
+impl<'a> TryIterator for FloatValueIterator<'a> {
+    type Item = Value<f64>;
+
+    fn try_next(&mut self) -> anyhow::Result<Option<Self::Item>> {
+        if self.sz == 0 {
+            return Ok(None);
+        }
+
+        if !self.ts_dec.next() {
+            return Err(anyhow!("can not read all timestamp block"));
+        }
+        if let Some(err) = self.ts_dec.err() {
+            return Err(anyhow!("read timestamp block error: {}", err.to_string()));
+        }
+
+        if !self.v_dec.next() {
+            return Err(anyhow!("can not read all values block"));
+        }
+        if let Some(err) = self.v_dec.err() {
+            return Err(anyhow!("read values block error: {}", err.to_string()));
+        }
+
+        self.sz -= 1;
+        Ok(Some(Value::new(self.ts_dec.read(), self.v_dec.read())))
+    }
+}
+
+pub enum FiledIterator<'a> {
+    FloatIterator(FloatIterator<'a>),
+    IntegerIterator(IntegerIterator<'a>),
+    BooleanIterator(BooleanIterator<'a>),
+    StringIterator(StringIterator),
+    UnsignedIterator(UnsignedIterator<'a>),
+}
+
+impl<'a> FiledIterator<'a> {
+    pub fn new(typ: u8, buf: &'a [u8], sz: usize) -> anyhow::Result<FiledIterator<'a>> {
+        match typ {
+            BLOCK_FLOAT64 => {
+                let dec = FloatDecoder::new(buf)?;
+                Ok(FiledIterator::FloatIterator(FloatIterator::new(dec, sz)))
+            }
+            BLOCK_INTEGER => {
+                let dec = IntegerDecoder::new(buf)?;
+                Ok(FiledIterator::IntegerIterator(IntegerIterator::new(
+                    dec, sz,
+                )))
+            }
+            BLOCK_BOOLEAN => {
+                let dec = BooleanDecoder::new(buf)?;
+                Ok(FiledIterator::BooleanIterator(BooleanIterator::new(
+                    dec, sz,
+                )))
+            }
+            BLOCK_STRING => {
+                let dec = StringDecoder::new(buf)?;
+                Ok(FiledIterator::StringIterator(StringIterator::new(dec, sz)))
+            }
+            BLOCK_UNSIGNED => {
+                let dec = UnsignedDecoder::new(buf)?;
+                Ok(FiledIterator::UnsignedIterator(UnsignedIterator::new(
+                    dec, sz,
+                )))
+            }
+            _ => Err(anyhow!("unknown type {}", typ)),
+        }
+    }
+}
+
+pub trait BatchBuilder {
+    type Item;
+
+    fn next(&mut self) -> anyhow::Result<bool>;
+    fn fill_value(&mut self) -> anyhow::Result<Option<Self::Item>>;
+    fn fill_null(&mut self);
+    fn build(&mut self) -> Arc<dyn Array>;
+}
+
+pub type TimeIterator<'a> = ValueIterator<i64, TimeDecoder<'a>>;
+pub type FloatIterator<'a> = ValueIterator<f64, FloatDecoder<'a>>;
+pub type IntegerIterator<'a> = ValueIterator<i64, IntegerDecoder<'a>>;
+pub type BooleanIterator<'a> = ValueIterator<bool, BooleanDecoder<'a>>;
+pub type StringIterator = ValueIterator<Vec<u8>, StringDecoder>;
+pub type UnsignedIterator<'a> = ValueIterator<u64, UnsignedDecoder<'a>>;
+
+pub struct ValueIterator<T, D>
+where
+    T: Debug + Send + Clone + PartialOrd + PartialEq,
+    Value<T>: TValue,
+    D: Decoder<T>,
+{
+    v_dec: D,
+    sz: usize,
+    _pd: PhantomData<T>,
+}
+
+impl<T, D> ValueIterator<T, D>
+where
+    T: Debug + Send + Clone + PartialOrd + PartialEq,
+    Value<T>: TValue,
+    D: Decoder<T>,
+{
+    pub fn new(v_dec: D, sz: usize) -> Self {
+        Self {
+            v_dec,
+            sz,
+            _pd: PhantomData,
+        }
+    }
+}
+
+impl<T, D> ValueIterator<T, D>
+where
+    T: Debug + Send + Clone + PartialOrd + PartialEq,
+    Value<T>: TValue,
+    D: Decoder<T>,
+{
+    pub fn try_next(&mut self) -> anyhow::Result<Option<T>> {
+        if self.sz == 0 {
+            return Ok(None);
+        }
+
+        if !self.v_dec.next() {
+            return Err(anyhow!("can not read all values block"));
+        }
+        if let Some(err) = self.v_dec.err() {
+            return Err(anyhow!("read values block error: {}", err.to_string()));
+        }
+
+        self.sz -= 1;
+        Ok(Some(self.v_dec.read()))
+    }
+
+    pub fn fill_null(&mut self) {
+        todo!()
+    }
+}
+
+pub struct FloatValueBuilder<'a> {
+    v_dec: FloatDecoder<'a>,
+    sz: usize,
+
+    buf: Option<FloatValuesVec>,
+    val: Option<f64>,
+}
+
+impl<'a> FloatValueBuilder<'a> {
+    pub fn new(v_dec: FloatDecoder<'a>, sz: usize) -> Self {
+        Self {
+            v_dec,
+            sz,
+            buf: None,
+            val: None,
+        }
+    }
+}
+
+impl<'a> FloatValueBuilder<'a> {
+    pub fn next(&mut self) -> anyhow::Result<bool> {
+        if self.sz == 0 {
+            self.val = None;
+            return Ok(false);
+        }
+
+        if !self.v_dec.next() {
+            return Err(anyhow!("can not read all values block"));
+        }
+        if let Some(err) = self.v_dec.err() {
+            return Err(anyhow!("read values block error: {}", err.to_string()));
+        }
+
+        self.sz -= 1;
+        self.val = Some(self.v_dec.read());
+
+        Ok(true)
+    }
+
+    pub fn value(&self) -> Option<f64> {
+        self.val
+    }
+
+    pub fn fill_value(&mut self) -> anyhow::Result<()> {
+        let val = self.val.take();
+        if val.is_none() {
+            return Err(anyhow!("value not found"));
+        }
+
+        if self.buf.is_none() {
+            self.buf = Some(FloatValuesVec::with_capacity(self.sz));
+        }
+
+        self.buf.as_mut().map(|x| x.push(val));
+
+        Ok(())
+    }
+
+    pub fn fill_null(&mut self) {
+        if self.buf.is_none() {
+            self.buf = Some(FloatValuesVec::with_capacity(self.sz));
+        }
+
+        self.buf.as_mut().map(|x| x.push_null());
+    }
+
+    pub fn build(&mut self) -> Option<Arc<dyn Array>> {
+        self.buf.take().map(|x| x.into_arc())
+    }
 }
