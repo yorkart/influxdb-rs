@@ -7,7 +7,7 @@ use influxdb_storage::StorageOperator;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::RwLock;
 
-use crate::engine::tsm1::file_store::index::{IndexEntries, IndexEntry};
+use crate::engine::tsm1::file_store::index::IndexEntries;
 use crate::engine::tsm1::file_store::reader::batch_deleter::BatchDeleter;
 use crate::engine::tsm1::file_store::reader::block_reader::{DefaultBlockAccessor, TSMBlock};
 use crate::engine::tsm1::file_store::reader::index_reader::{IndirectIndex, KeyIterator, TSMIndex};
@@ -19,7 +19,6 @@ use crate::engine::tsm1::file_store::tombstone::{
     IndexTombstonerFilter, TombstoneStat, Tombstoner,
 };
 use crate::engine::tsm1::file_store::{KeyRange, TimeRange, MAGIC_NUMBER, VERSION};
-use crate::engine::tsm1::value::values::BlockDecoder;
 
 /// TSMFile represents an on-disk TSM file.
 #[async_trait]
@@ -30,9 +29,9 @@ pub trait TSMReader: Sync + Send {
 
     async fn block_iterator_builder(&self) -> anyhow::Result<Box<dyn AsyncIteratorBuilder>>;
 
-    async fn read_block_at<T>(&self, entry: IndexEntry, values: &mut T) -> anyhow::Result<()>
-    where
-        T: BlockDecoder;
+    // async fn read_block_at<T>(&self, entry: IndexEntry, values: &mut T) -> anyhow::Result<()>
+    // where
+    //     T: BlockDecoder;
 
     /// Entries returns the index entries for all blocks for the given key.
     async fn read_entries(&self, key: &[u8], entries: &mut IndexEntries) -> anyhow::Result<()>;
@@ -265,21 +264,21 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
         Ok(builder)
     }
 
-    async fn read_block_at<T>(&self, entry: IndexEntry, values: &mut T) -> anyhow::Result<()>
-    where
-        T: BlockDecoder,
-    {
-        let mut reader = self.op.reader().await?;
-
-        let mut block = vec![];
-        self.inner
-            .block()
-            .read_block(&mut reader, entry, &mut block)
-            .await?;
-        values.decode(block.as_slice())?;
-
-        Ok(())
-    }
+    // async fn read_block_at<T>(&self, entry: IndexEntry, values: &mut T) -> anyhow::Result<()>
+    // where
+    //     T: BlockDecoder,
+    // {
+    //     let mut reader = self.op.reader().await?;
+    //
+    //     let mut block = vec![];
+    //     self.inner
+    //         .block()
+    //         .read_block(&mut reader, entry, &mut block)
+    //         .await?;
+    //     values.decode(block.as_slice())?;
+    //
+    //     Ok(())
+    // }
 
     async fn read_entries(&self, key: &[u8], entries: &mut IndexEntries) -> anyhow::Result<()> {
         let mut reader = self.op.reader().await?;

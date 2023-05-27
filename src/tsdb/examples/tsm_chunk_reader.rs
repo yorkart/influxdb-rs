@@ -27,10 +27,10 @@ async fn main() -> anyhow::Result<()> {
 
     let op = StorageOperator::root(config.path.as_str())?;
     let tsm_reader = new_default_tsm_reader(op).await?;
-    let mut b = tsm_reader.block_iterator_builder().await?;
+    let b = tsm_reader.block_iterator_builder().await?;
 
-    let series = "cpu,host=server-09,region=uswest-00";
-    let fields = vec!["value", "value_1"];
+    let series = "cpu,host=server-0,location=us-west";
+    let fields = vec!["value"];
 
     for field in fields.as_slice() {
         let key = series_field_key(series.as_bytes(), field.as_bytes());
@@ -47,7 +47,7 @@ async fn main() -> anyhow::Result<()> {
         println!("chunk len: {:?}", chunk.len());
         chunks.push(chunk);
     }
-    let table_str = write(chunks.as_slice(), &["timestamp", &fields[0], &fields[1]]);
+    let table_str = write(chunks.as_slice(), &["timestamp", &fields[0]]);
     println!("{}", &table_str[..1000]);
 
     Ok(())

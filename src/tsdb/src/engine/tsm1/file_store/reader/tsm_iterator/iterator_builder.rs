@@ -21,7 +21,7 @@ use crate::engine::tsm1::file_store::reader::tsm_reader::ShareTSMReaderInner;
 #[async_trait]
 pub trait AsyncIteratorBuilder: Send + Sync {
     async fn build(
-        &mut self,
+        &self,
         series: &[u8],
         fields: &[&[u8]],
     ) -> anyhow::Result<Box<dyn AsyncIterator<Item = Chunk<Arc<dyn Array>>>>>;
@@ -48,7 +48,7 @@ where
         }
     }
 
-    async fn entries(&mut self, key: &[u8]) -> anyhow::Result<IndexEntries> {
+    async fn entries(&self, key: &[u8]) -> anyhow::Result<IndexEntries> {
         let mut reader = self.reader.lock().await;
         let mut entries = IndexEntries::default();
         self.inner
@@ -66,7 +66,7 @@ where
     I: TSMIndex + 'static,
 {
     async fn build(
-        &mut self,
+        &self,
         key: &[u8],
         fields: &[&[u8]],
     ) -> anyhow::Result<Box<dyn AsyncIterator<Item = Chunk<Arc<dyn Array>>>>> {
@@ -86,7 +86,7 @@ where
                     let array_builder: Box<dyn ArrayBuilder> = Box::new(array_builder);
                     Ok(array_builder)
                 }
-                _ => Err(anyhow!("")),
+                _ => Err(anyhow!("unknown type: {}", typ)),
             }?;
             builders.push(builder);
         }

@@ -95,27 +95,27 @@ mod tests {
             println!("{:?}", data);
         }
 
-        {
-            let op = influxdb_storage::operator().unwrap();
-            let op = StorageOperator::new(op, tsm_file.to_str().unwrap());
-
-            let mut r = DefaultTSMReader::new(op).await.unwrap();
-
-            let mut entries = IndexEntries::new(BLOCK_FLOAT64);
-            r.read_entries("cpu".as_bytes(), &mut entries)
-                .await
-                .unwrap();
-
-            let mut float_values: Vec<Value<f64>> = Vec::new();
-            for entry in entries.entries {
-                r.read_block_at(entry, &mut float_values).await.unwrap();
-            }
-
-            for v in float_values {
-                println!("{}, {}", v.unix_nano, v.value);
-            }
-
-            r.close().await.unwrap();
-        }
+        // {
+        //     let op = influxdb_storage::operator().unwrap();
+        //     let op = StorageOperator::new(op, tsm_file.to_str().unwrap());
+        //
+        //     let mut r = DefaultTSMReader::new(op).await.unwrap();
+        //
+        //     let mut entries = IndexEntries::new(BLOCK_FLOAT64);
+        //     r.read_entries("cpu".as_bytes(), &mut entries)
+        //         .await
+        //         .unwrap();
+        //
+        //     let mut float_values: Vec<Value<f64>> = Vec::new();
+        //     for entry in entries.entries {
+        //         r.read_block_at(entry, &mut float_values).await.unwrap();
+        //     }
+        //
+        //     for v in float_values {
+        //         println!("{}, {}", v.unix_nano, v.value);
+        //     }
+        //
+        //     r.close().await.unwrap();
+        // }
     }
 }
