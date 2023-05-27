@@ -1,7 +1,8 @@
-use crate::estimator::Sketch;
 use anyhow::anyhow;
 use hyperloglogplus::{HyperLogLog, HyperLogLogError, HyperLogLogPlus};
 use twox_hash::RandomXxHashBuilder64;
+
+use crate::estimator::Sketch;
 
 /// DEFAULT_PRECISION is the default precision.
 const DEFAULT_PRECISION: u8 = 16;
