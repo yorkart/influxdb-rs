@@ -1,10 +1,6 @@
 use std::fmt::Debug;
 
-use crate::engine::tsm1::block::decoder::{
-    decode_bool_block, decode_float_block, decode_integer_block, decode_string_block,
-    decode_unsigned_block,
-};
-use crate::engine::tsm1::value::value::{TValue, Value};
+use crate::engine::tsm1::value::value::{TimeValue, Value};
 use crate::engine::tsm1::value::FieldType;
 
 pub trait Array: Send + Sync + 'static {
@@ -20,16 +16,12 @@ pub trait Array: Send + Sync + 'static {
     fn decode1(&mut self, block: &[u8]) -> anyhow::Result<()>;
 }
 
-pub trait BlockDecoder: Array + Debug {
-    fn decode(&mut self, block: &[u8]) -> anyhow::Result<()>;
-}
-
-pub type TypeValues<T> = Vec<Value<T>>;
+pub type TypeValues<T> = Vec<TimeValue<T>>;
 
 impl<T> Array for TypeValues<T>
 where
     T: FieldType + 'static,
-    Value<T>: TValue,
+    TimeValue<T>: Value,
 {
     fn min_time(&self) -> i64 {
         self[0].unix_nano
@@ -214,7 +206,7 @@ where
     }
 
     fn decode1(&mut self, block: &[u8]) -> anyhow::Result<()> {
-        TValue::decode(self, block)
+        Value::decode(self, block)
     }
 }
 
@@ -223,36 +215,6 @@ pub type IntegerValues = TypeValues<i64>;
 pub type BooleanValues = TypeValues<bool>;
 pub type StringValues = TypeValues<Vec<u8>>;
 pub type UnsignedValues = TypeValues<u64>;
-
-impl BlockDecoder for FloatValues {
-    fn decode(&mut self, block: &[u8]) -> anyhow::Result<()> {
-        decode_float_block(block, self)
-    }
-}
-
-impl BlockDecoder for IntegerValues {
-    fn decode(&mut self, block: &[u8]) -> anyhow::Result<()> {
-        decode_integer_block(block, self)
-    }
-}
-
-impl BlockDecoder for BooleanValues {
-    fn decode(&mut self, block: &[u8]) -> anyhow::Result<()> {
-        decode_bool_block(block, self)
-    }
-}
-
-impl BlockDecoder for StringValues {
-    fn decode(&mut self, block: &[u8]) -> anyhow::Result<()> {
-        decode_string_block(block, self)
-    }
-}
-
-impl BlockDecoder for UnsignedValues {
-    fn decode(&mut self, block: &[u8]) -> anyhow::Result<()> {
-        decode_unsigned_block(block, self)
-    }
-}
 
 /// Values describes the various types of block data that can be held within a TSM file.
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
@@ -289,27 +251,27 @@ impl TryFrom<(u8, &[u8])> for Values {
         match typ {
             0 => {
                 let mut values: TypeValues<f64> = Vec::with_capacity(0);
-                values.decode(block)?;
+                values.decode1(block)?;
                 Ok(Values::Float(values))
             }
             1 => {
                 let mut values: TypeValues<i64> = Vec::with_capacity(0);
-                values.decode(block)?;
+                values.decode1(block)?;
                 Ok(Values::Integer(values))
             }
             2 => {
                 let mut values: TypeValues<bool> = Vec::with_capacity(0);
-                values.decode(block)?;
+                values.decode1(block)?;
                 Ok(Values::Bool(values))
             }
             3 => {
                 let mut values: TypeValues<Vec<u8>> = Vec::with_capacity(0);
-                values.decode(block)?;
+                values.decode1(block)?;
                 Ok(Values::String(values))
             }
             4 => {
                 let mut values: TypeValues<u64> = Vec::with_capacity(0);
-                values.decode(block)?;
+                values.decode1(block)?;
                 Ok(Values::Unsigned(values))
             }
             _ => Err(anyhow!("unsupported type {}", typ)),
@@ -465,7 +427,7 @@ impl Array for Values {
 /// and returns the position, i, where v would be inserted.
 /// An additional check of a[i].UnixNano() == v is necessary
 /// to determine if the value v exists.
-fn search<T>(values: &[Value<T>], v: i64) -> usize
+fn search<T>(values: &[TimeValue<T>], v: i64) -> usize
 where
     T: FieldType,
 {
