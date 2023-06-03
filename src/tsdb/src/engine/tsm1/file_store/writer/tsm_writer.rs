@@ -12,7 +12,7 @@ use crate::engine::tsm1::file_store::writer::index_writer::{
     DirectIndex, FileIndexBuffer, IndexWriter, MemoryIndexBuffer,
 };
 use crate::engine::tsm1::file_store::{FSYNC_EVERY, HEADER, MAX_INDEX_ENTRIES, MAX_KEY_LENGTH};
-use crate::engine::tsm1::value::{TValues, Values};
+use crate::engine::tsm1::value::{Array, Values};
 
 /// TSMWriter writes TSM formatted key and values.
 #[async_trait]

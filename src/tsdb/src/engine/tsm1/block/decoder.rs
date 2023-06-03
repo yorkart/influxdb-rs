@@ -1,4 +1,3 @@
-use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -19,7 +18,8 @@ use crate::engine::tsm1::codec::unsigned::UnsignedDecoder;
 use crate::engine::tsm1::codec::varint::VarInt;
 use crate::engine::tsm1::codec::{timestamp, Decoder};
 use crate::engine::tsm1::value::{
-    BooleanValues, FloatValues, IntegerValues, StringValues, TValue, UnsignedValues, Value, Values,
+    BooleanValues, FieldType, FloatValues, IntegerValues, StringValues, TValue, UnsignedValues,
+    Value, Values,
 };
 
 pub fn decode_block(block: &[u8], values: &mut Values) -> anyhow::Result<()> {
@@ -207,7 +207,7 @@ fn decode_block_using<T>(
     values: &mut Vec<Value<T>>,
 ) -> anyhow::Result<()>
 where
-    T: Debug + Send + Clone + PartialOrd + PartialEq,
+    T: FieldType,
     Value<T>: TValue,
 {
     let remain = values.capacity() - values.len();
@@ -395,7 +395,7 @@ pub type UnsignedIterator<'a> = ValueIterator<u64, UnsignedDecoder<'a>>;
 
 pub struct ValueIterator<T, D>
 where
-    T: Debug + Send + Clone + PartialOrd + PartialEq,
+    T: FieldType,
     Value<T>: TValue,
     D: Decoder<T>,
 {
@@ -406,7 +406,7 @@ where
 
 impl<T, D> ValueIterator<T, D>
 where
-    T: Debug + Send + Clone + PartialOrd + PartialEq,
+    T: FieldType,
     Value<T>: TValue,
     D: Decoder<T>,
 {
@@ -421,7 +421,7 @@ where
 
 impl<T, D> ValueIterator<T, D>
 where
-    T: Debug + Send + Clone + PartialOrd + PartialEq,
+    T: FieldType,
     Value<T>: TValue,
     D: Decoder<T>,
 {

@@ -14,3 +14,5 @@ chrono = "0.4"
 twox-hash = "1.6"
 hyperloglogplus = { version = "*", features = ["const-loop"] }
 #leapfrog = "0.2"
+
+rhh = { package = "rhh", git = "https://github.com/yorkart/rhh.git"}

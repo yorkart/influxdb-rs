@@ -72,6 +72,10 @@ impl IndexEntry {
     pub fn overlaps_time_range(&self, min: i64, max: i64) -> bool {
         self.min_time <= max && self.max_time >= min
     }
+
+    pub fn overlaps(&self, other: &IndexEntry) -> bool {
+        self.overlaps_time_range(other.min_time, other.max_time)
+    }
 }
 
 impl Display for IndexEntry {

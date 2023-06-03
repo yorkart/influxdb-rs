@@ -5,28 +5,30 @@ use crate::engine::tsm1::block::decoder::{
     decode_unsigned_block,
 };
 use crate::engine::tsm1::value::value::{TValue, Value};
+use crate::engine::tsm1::value::FieldType;
 
-pub trait TValues {
+pub trait Array: Send + Sync + 'static {
     fn min_time(&self) -> i64;
     fn max_time(&self) -> i64;
     fn size(&self) -> usize;
     fn ordered(&self) -> bool;
     fn deduplicate(self) -> Self;
-    fn exclude(self, min: i64, max: i64) -> Self;
-    fn include(self, min: i64, max: i64) -> Self;
+    fn exclude(&mut self, min: i64, max: i64);
+    fn include(&mut self, min: i64, max: i64);
     fn find_range(&self, min: i64, max: i64) -> (isize, isize);
     fn merge(self, b: Self) -> Self;
+    fn decode1(&mut self, block: &[u8]) -> anyhow::Result<()>;
 }
 
-pub trait BlockDecoder: Sync + Send + Debug {
+pub trait BlockDecoder: Array + Debug {
     fn decode(&mut self, block: &[u8]) -> anyhow::Result<()>;
 }
 
 pub type TypeValues<T> = Vec<Value<T>>;
 
-impl<T> TValues for TypeValues<T>
+impl<T> Array for TypeValues<T>
 where
-    T: Debug + Send + Clone + PartialOrd + PartialEq,
+    T: FieldType + 'static,
     Value<T>: TValue,
 {
     fn min_time(&self) -> i64 {
@@ -84,10 +86,12 @@ where
         self
     }
 
-    fn exclude(mut self, min: i64, max: i64) -> Self {
+    /// Exclude returns the subset of values not in [min, max].  The values must
+    /// be deduplicated and sorted before calling Exclude or the results are undefined.
+    fn exclude(&mut self, min: i64, max: i64) {
         let (rmin, mut rmax) = self.find_range(min, max);
         if rmin == -1 && rmax == -1 {
-            return self;
+            return;
         }
 
         // a[rmin].UnixNano() ≥ min
@@ -103,18 +107,19 @@ where
                 self.truncate((rmin + rest) as usize);
                 self.extend_from_slice(right.as_slice());
 
-                return self;
+                return;
             }
         }
 
         self.truncate(rmin as usize);
-        self
     }
 
-    fn include(mut self, min: i64, max: i64) -> Self {
+    /// Include returns the subset values between min and max inclusive. The values must
+    /// be deduplicated and sorted before calling Exclude or the results are undefined.
+    fn include(&mut self, min: i64, max: i64) {
         let (rmin, mut rmax) = self.find_range(min, max);
         if rmin == -1 && rmax == -1 {
-            return vec![];
+            return;
         }
 
         // a[rmin].UnixNano() ≥ min
@@ -125,13 +130,21 @@ where
         }
 
         if rmin > -1 {
-            return self[rmin as usize..rmax as usize].to_vec();
+            let b = self[rmin as usize..rmax as usize].to_vec();
+            self.clear();
+            self.extend_from_slice(b.as_slice());
+            return;
         }
 
         self.truncate(rmax as usize);
-        self
     }
 
+    /// FindRange returns the positions where min and max would be
+    /// inserted into the array. If a[0].UnixNano() > max or
+    /// a[len-1].UnixNano() < min then FindRange returns (-1, -1)
+    /// indicating the array is outside the [min, max]. The values must
+    /// be deduplicated and sorted before calling Exclude or the results
+    /// are undefined.
     fn find_range(&self, min: i64, max: i64) -> (isize, isize) {
         if self.len() == 0 || min > max {
             return (-1, -1);
@@ -147,6 +160,9 @@ where
         (search(self, min) as isize, search(self, max) as isize)
     }
 
+    /// Merge overlays b to top of a.  If two values conflict with
+    /// the same timestamp, b is used.  Both a and b must be sorted
+    /// in ascending order.
     fn merge(mut self, mut b: Self) -> Self {
         if self.len() == 0 {
             return b;
@@ -195,6 +211,10 @@ where
         }
 
         out
+    }
+
+    fn decode1(&mut self, block: &[u8]) -> anyhow::Result<()> {
+        TValue::decode(self, block)
     }
 }
 
@@ -309,7 +329,7 @@ impl Values {
     }
 }
 
-impl TValues for Values {
+impl Array for Values {
     fn min_time(&self) -> i64 {
         match self {
             Self::Float(values) => values.min_time(),
@@ -360,23 +380,23 @@ impl TValues for Values {
         }
     }
 
-    fn exclude(self, min: i64, max: i64) -> Self {
+    fn exclude(&mut self, min: i64, max: i64) {
         match self {
-            Self::Float(values) => Self::Float(values.exclude(min, max)),
-            Self::Integer(values) => Self::Integer(values.exclude(min, max)),
-            Self::Bool(values) => Self::Bool(values.exclude(min, max)),
-            Self::String(values) => Self::String(values.exclude(min, max)),
-            Self::Unsigned(values) => Self::Unsigned(values.exclude(min, max)),
+            Self::Float(values) => values.exclude(min, max),
+            Self::Integer(values) => values.exclude(min, max),
+            Self::Bool(values) => values.exclude(min, max),
+            Self::String(values) => values.exclude(min, max),
+            Self::Unsigned(values) => values.exclude(min, max),
         }
     }
 
-    fn include(self, min: i64, max: i64) -> Self {
+    fn include(&mut self, min: i64, max: i64) {
         match self {
-            Self::Float(values) => Self::Float(values.include(min, max)),
-            Self::Integer(values) => Self::Integer(values.include(min, max)),
-            Self::Bool(values) => Self::Bool(values.include(min, max)),
-            Self::String(values) => Self::String(values.include(min, max)),
-            Self::Unsigned(values) => Self::Unsigned(values.include(min, max)),
+            Self::Float(values) => values.include(min, max),
+            Self::Integer(values) => values.include(min, max),
+            Self::Bool(values) => values.include(min, max),
+            Self::String(values) => values.include(min, max),
+            Self::Unsigned(values) => values.include(min, max),
         }
     }
 
@@ -429,6 +449,16 @@ impl TValues for Values {
             }
         }
     }
+
+    fn decode1(&mut self, block: &[u8]) -> anyhow::Result<()> {
+        match self {
+            Self::Float(values) => values.decode1(block),
+            Self::Integer(values) => values.decode1(block),
+            Self::Bool(values) => values.decode1(block),
+            Self::String(values) => values.decode1(block),
+            Self::Unsigned(values) => values.decode1(block),
+        }
+    }
 }
 
 /// search performs a binary search for UnixNano() v in a
@@ -437,7 +467,7 @@ impl TValues for Values {
 /// to determine if the value v exists.
 fn search<T>(values: &[Value<T>], v: i64) -> usize
 where
-    T: Debug + Send + Clone + PartialOrd + PartialEq,
+    T: FieldType,
 {
     // Define: f(x) → a[x].UnixNano() < v
     // Define: f(-1) == true, f(n) == false

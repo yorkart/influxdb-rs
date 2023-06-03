@@ -1,5 +1,3 @@
-use std::fmt::Debug;
-
 use crate::engine::tsm1::block::{
     BLOCK_BOOLEAN, BLOCK_FLOAT64, BLOCK_INTEGER, BLOCK_STRING, BLOCK_UNSIGNED,
 };
@@ -11,7 +9,7 @@ use crate::engine::tsm1::codec::timestamp::TimeEncoder;
 use crate::engine::tsm1::codec::unsigned::UnsignedEncoder;
 use crate::engine::tsm1::codec::varint::VarInt;
 use crate::engine::tsm1::codec::{varint, Encoder};
-use crate::engine::tsm1::value::{Value, Values};
+use crate::engine::tsm1::value::{FieldType, Value, Values};
 
 pub fn encode_block(dst: &mut Vec<u8>, values: Values) -> anyhow::Result<()> {
     match values {
@@ -61,7 +59,7 @@ fn encode_block_using<T>(
     mut v_enc: impl Encoder<T>,
 ) -> anyhow::Result<()>
 where
-    T: Debug + Send + Clone + PartialOrd + PartialEq,
+    T: FieldType,
 {
     if values.len() == 0 {
         return Err(anyhow!("encode_float_block: no data found"));

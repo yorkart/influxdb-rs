@@ -29,7 +29,7 @@ pub trait TSMReader: Sync + Send {
 
     async fn block_iterator_builder(&self) -> anyhow::Result<Box<dyn AsyncIteratorBuilder>>;
 
-    // async fn read_block_at<T>(&self, entry: IndexEntry, values: &mut T) -> anyhow::Result<()>
+    // async fn read_block_at<T>(&self, entry: &IndexEntry, values: &mut T) -> anyhow::Result<()>
     // where
     //     T: BlockDecoder;
 
@@ -38,10 +38,10 @@ pub trait TSMReader: Sync + Send {
 
     /// contains returns true if the file contains any values for the given
     /// key.
-    async fn contains(&mut self, key: &[u8]) -> anyhow::Result<bool>;
+    async fn contains(&self, key: &[u8]) -> anyhow::Result<bool>;
 
     /// overlaps_time_range returns true if the time range of the file intersect min and max.
-    async fn overlaps_time_range(&mut self, min: i64, max: i64) -> bool;
+    async fn overlaps_time_range(&self, min: i64, max: i64) -> bool;
 
     /// time_range returns the min and max time across all keys in the file.
     async fn time_range(&self) -> TimeRange;
@@ -58,10 +58,10 @@ pub trait TSMReader: Sync + Send {
     async fn key_iterator(&self) -> anyhow::Result<KeyIterator>;
 
     /// seek returns the position in the index with the key <= key.
-    async fn seek(&mut self, key: &[u8]) -> anyhow::Result<u64>;
+    async fn seek(&self, key: &[u8]) -> anyhow::Result<u64>;
 
     /// key_at returns the key located at index position idx.
-    async fn key_at(&mut self, idx: usize) -> anyhow::Result<Option<(Vec<u8>, u8)>>;
+    async fn key_at(&self, idx: usize) -> anyhow::Result<Option<(Vec<u8>, u8)>>;
 
     /// Type returns the block type of the values stored for the key.  Returns one of
     /// BlockFloat64, BlockInt64, BlockBoolean, BlockString.  If key does not exist,
@@ -264,7 +264,7 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
         Ok(builder)
     }
 
-    // async fn read_block_at<T>(&self, entry: IndexEntry, values: &mut T) -> anyhow::Result<()>
+    // async fn read_block_at<T>(&self, entry: &IndexEntry, values: &mut T) -> anyhow::Result<()>
     // where
     //     T: BlockDecoder,
     // {
@@ -285,12 +285,12 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
         self.inner.index().entries(&mut reader, key, entries).await
     }
 
-    async fn contains(&mut self, key: &[u8]) -> anyhow::Result<bool> {
+    async fn contains(&self, key: &[u8]) -> anyhow::Result<bool> {
         let mut reader = self.op.reader().await?;
         self.inner.index().contains(&mut reader, key).await
     }
 
-    async fn overlaps_time_range(&mut self, min: i64, max: i64) -> bool {
+    async fn overlaps_time_range(&self, min: i64, max: i64) -> bool {
         self.inner.index().overlaps_time_range(min, max)
     }
 
@@ -315,12 +315,12 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
         self.inner.index().key_iterator(reader).await
     }
 
-    async fn seek(&mut self, key: &[u8]) -> anyhow::Result<u64> {
+    async fn seek(&self, key: &[u8]) -> anyhow::Result<u64> {
         let mut reader = self.op.reader().await?;
         self.inner.index().seek(&mut reader, key).await
     }
 
-    async fn key_at(&mut self, idx: usize) -> anyhow::Result<Option<(Vec<u8>, u8)>> {
+    async fn key_at(&self, idx: usize) -> anyhow::Result<Option<(Vec<u8>, u8)>> {
         let mut reader = self.op.reader().await?;
         self.inner.index().key_at(&mut reader, idx).await
     }

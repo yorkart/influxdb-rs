@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::SeekFrom;
 
 use influxdb_storage::StorageOperator;
-use influxdb_utils::rhh::{dist, hash_key};
+use influxdb_utils::hash::{distance, hash_key};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 
 use crate::common::Section;
@@ -237,7 +237,7 @@ impl SeriesIndex {
             let elem_key = elem_key.unwrap();
 
             let elem_hash = hash_key(elem_key.as_slice());
-            if d > dist(elem_hash, pos, self.hdr.capacity) {
+            if d > distance(elem_hash, pos as usize, self.hdr.capacity) {
                 return Ok(0);
             } else if elem_hash == hash && elem_key.as_slice().eq(key) {
                 let series_id = reader.read_u64().await?;
@@ -278,7 +278,7 @@ impl SeriesIndex {
                 }
 
                 let hash = hash_key(element_id.to_be_bytes().as_slice());
-                if d > dist(hash, pos, self.hdr.capacity) {
+                if d > distance(hash, pos as usize, self.hdr.capacity) {
                     return Ok(None);
                 }
             }
