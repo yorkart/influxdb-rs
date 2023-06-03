@@ -41,7 +41,7 @@ where
     async fn try_next(&mut self) -> anyhow::Result<Option<Self::Item>> {
         if self.values.len() == 0 || self.values.len() <= self.step {
             if let Some(v) = self.block_itr.try_next().await? {
-                (&mut self.values).decode1(v)?;
+                (&mut self.values).decode(v)?;
                 if self.values.len() == 0 {
                     return Ok(None);
                 }

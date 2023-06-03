@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use crate::engine::tsm1::value::value::{TimeValue, Value};
 use crate::engine::tsm1::value::FieldType;
 
-pub trait Array: Send + Sync + 'static {
+pub trait Array: Send + Sync + Default + 'static {
     fn min_time(&self) -> i64;
     fn max_time(&self) -> i64;
     fn size(&self) -> usize;
@@ -13,7 +13,7 @@ pub trait Array: Send + Sync + 'static {
     fn include(&mut self, min: i64, max: i64);
     fn find_range(&self, min: i64, max: i64) -> (isize, isize);
     fn merge(self, b: Self) -> Self;
-    fn decode1(&mut self, block: &[u8]) -> anyhow::Result<()>;
+    fn decode(&mut self, block: &[u8]) -> anyhow::Result<()>;
 }
 
 pub type TypeValues<T> = Vec<TimeValue<T>>;
@@ -205,7 +205,7 @@ where
         out
     }
 
-    fn decode1(&mut self, block: &[u8]) -> anyhow::Result<()> {
+    fn decode(&mut self, block: &[u8]) -> anyhow::Result<()> {
         Value::decode(self, block)
     }
 }
@@ -224,6 +224,12 @@ pub enum Values {
     Bool(BooleanValues),
     String(StringValues),
     Unsigned(UnsignedValues),
+}
+
+impl Default for Values {
+    fn default() -> Self {
+        Values::Float(vec![])
+    }
 }
 
 impl Into<FloatValues> for Values {
@@ -251,27 +257,27 @@ impl TryFrom<(u8, &[u8])> for Values {
         match typ {
             0 => {
                 let mut values: TypeValues<f64> = Vec::with_capacity(0);
-                values.decode1(block)?;
+                values.decode(block)?;
                 Ok(Values::Float(values))
             }
             1 => {
                 let mut values: TypeValues<i64> = Vec::with_capacity(0);
-                values.decode1(block)?;
+                values.decode(block)?;
                 Ok(Values::Integer(values))
             }
             2 => {
                 let mut values: TypeValues<bool> = Vec::with_capacity(0);
-                values.decode1(block)?;
+                values.decode(block)?;
                 Ok(Values::Bool(values))
             }
             3 => {
                 let mut values: TypeValues<Vec<u8>> = Vec::with_capacity(0);
-                values.decode1(block)?;
+                values.decode(block)?;
                 Ok(Values::String(values))
             }
             4 => {
                 let mut values: TypeValues<u64> = Vec::with_capacity(0);
-                values.decode1(block)?;
+                values.decode(block)?;
                 Ok(Values::Unsigned(values))
             }
             _ => Err(anyhow!("unsupported type {}", typ)),
@@ -412,13 +418,13 @@ impl Array for Values {
         }
     }
 
-    fn decode1(&mut self, block: &[u8]) -> anyhow::Result<()> {
+    fn decode(&mut self, block: &[u8]) -> anyhow::Result<()> {
         match self {
-            Self::Float(values) => values.decode1(block),
-            Self::Integer(values) => values.decode1(block),
-            Self::Bool(values) => values.decode1(block),
-            Self::String(values) => values.decode1(block),
-            Self::Unsigned(values) => values.decode1(block),
+            Self::Float(values) => values.decode(block),
+            Self::Integer(values) => values.decode(block),
+            Self::Bool(values) => values.decode(block),
+            Self::String(values) => values.decode(block),
+            Self::Unsigned(values) => values.decode(block),
         }
     }
 }
