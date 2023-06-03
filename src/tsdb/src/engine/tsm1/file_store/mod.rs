@@ -69,7 +69,7 @@ mod tests {
     use crate::engine::tsm1::file_store::index::IndexEntries;
     use crate::engine::tsm1::file_store::reader::tsm_reader::{DefaultTSMReader, TSMReader};
     use crate::engine::tsm1::file_store::writer::tsm_writer::{DefaultTSMWriter, TSMWriter};
-    use crate::engine::tsm1::value::{Value, Values};
+    use crate::engine::tsm1::value::{TimeValue, Values};
 
     #[tokio::test]
     async fn test_tsm_reader() {
@@ -81,10 +81,10 @@ mod tests {
             let mut w = DefaultTSMWriter::with_mem_buffer(&tsm_file).await.unwrap();
 
             let values = Values::Float(vec![
-                Value::new(1, 1.0),
-                Value::new(2, 3.0),
-                Value::new(3, 5.0),
-                Value::new(4, 7.0),
+                TimeValue::new(1, 1.0),
+                TimeValue::new(2, 3.0),
+                TimeValue::new(3, 5.0),
+                TimeValue::new(4, 7.0),
             ]);
 
             w.write("cpu".as_bytes(), values).await.unwrap();

@@ -17,7 +17,7 @@ impl FieldType for Vec<u8> {}
 impl FieldType for u64 {}
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
-pub struct Value<T>
+pub struct TimeValue<T>
 where
     T: FieldType,
 {
@@ -25,7 +25,7 @@ where
     pub value: T,
 }
 
-impl<T> Value<T>
+impl<T> TimeValue<T>
 where
     T: FieldType,
 {
@@ -34,19 +34,19 @@ where
     }
 }
 
-pub trait TValue: Debug + Send + Clone + PartialOrd + PartialEq {
+pub trait Value: Debug + Send + Clone + PartialOrd + PartialEq {
     fn block_type() -> u8;
     fn encode_size(&self) -> usize;
     fn decode(values: &mut Vec<Self>, block: &[u8]) -> anyhow::Result<()>;
 }
 
-pub type FloatValue = Value<f64>;
-pub type IntegerValue = Value<i64>;
-pub type BoolValue = Value<bool>;
-pub type StringValue = Value<Vec<u8>>;
-pub type UnsignedValue = Value<u64>;
+pub type FloatValue = TimeValue<f64>;
+pub type IntegerValue = TimeValue<i64>;
+pub type BoolValue = TimeValue<bool>;
+pub type StringValue = TimeValue<Vec<u8>>;
+pub type UnsignedValue = TimeValue<u64>;
 
-impl TValue for FloatValue {
+impl Value for FloatValue {
     fn block_type() -> u8 {
         BLOCK_FLOAT64
     }
@@ -60,7 +60,7 @@ impl TValue for FloatValue {
     }
 }
 
-impl TValue for IntegerValue {
+impl Value for IntegerValue {
     fn block_type() -> u8 {
         BLOCK_INTEGER
     }
@@ -74,7 +74,7 @@ impl TValue for IntegerValue {
     }
 }
 
-impl TValue for UnsignedValue {
+impl Value for UnsignedValue {
     fn block_type() -> u8 {
         BLOCK_UNSIGNED
     }
@@ -88,7 +88,7 @@ impl TValue for UnsignedValue {
     }
 }
 
-impl TValue for BoolValue {
+impl Value for BoolValue {
     fn block_type() -> u8 {
         BLOCK_BOOLEAN
     }
@@ -102,7 +102,7 @@ impl TValue for BoolValue {
     }
 }
 
-impl TValue for StringValue {
+impl Value for StringValue {
     fn block_type() -> u8 {
         BLOCK_STRING
     }

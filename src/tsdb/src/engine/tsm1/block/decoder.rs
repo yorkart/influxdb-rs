@@ -18,7 +18,7 @@ use crate::engine::tsm1::codec::unsigned::UnsignedDecoder;
 use crate::engine::tsm1::codec::varint::VarInt;
 use crate::engine::tsm1::codec::{timestamp, Decoder};
 use crate::engine::tsm1::value::{
-    BooleanValues, FieldType, FloatValues, IntegerValues, StringValues, TValue, UnsignedValues,
+    BooleanValues, FieldType, FloatValues, IntegerValues, StringValues, TimeValue, UnsignedValues,
     Value, Values,
 };
 
@@ -204,11 +204,11 @@ fn decode_block_using<T>(
     sz: usize,
     mut ts_dec: impl Decoder<i64>,
     mut v_dec: impl Decoder<T>,
-    values: &mut Vec<Value<T>>,
+    values: &mut Vec<TimeValue<T>>,
 ) -> anyhow::Result<()>
 where
     T: FieldType,
-    Value<T>: TValue,
+    TimeValue<T>: Value,
 {
     let remain = values.capacity() - values.len();
     if remain < sz {
@@ -229,7 +229,7 @@ where
             return Err(anyhow!("read values block error: {}", err.to_string()));
         }
 
-        values.push(Value::new(ts_dec.read(), v_dec.read()));
+        values.push(TimeValue::new(ts_dec.read(), v_dec.read()));
     }
 
     Ok(())
@@ -309,7 +309,7 @@ impl<'a> FloatValueIterator<'a> {
 }
 
 impl<'a> TryIterator for FloatValueIterator<'a> {
-    type Item = Value<f64>;
+    type Item = TimeValue<f64>;
 
     fn try_next(&mut self) -> anyhow::Result<Option<Self::Item>> {
         if self.sz == 0 {
@@ -331,7 +331,7 @@ impl<'a> TryIterator for FloatValueIterator<'a> {
         }
 
         self.sz -= 1;
-        Ok(Some(Value::new(self.ts_dec.read(), self.v_dec.read())))
+        Ok(Some(TimeValue::new(self.ts_dec.read(), self.v_dec.read())))
     }
 }
 
@@ -396,7 +396,7 @@ pub type UnsignedIterator<'a> = ValueIterator<u64, UnsignedDecoder<'a>>;
 pub struct ValueIterator<T, D>
 where
     T: FieldType,
-    Value<T>: TValue,
+    TimeValue<T>: Value,
     D: Decoder<T>,
 {
     v_dec: D,
@@ -407,7 +407,7 @@ where
 impl<T, D> ValueIterator<T, D>
 where
     T: FieldType,
-    Value<T>: TValue,
+    TimeValue<T>: Value,
     D: Decoder<T>,
 {
     pub fn new(v_dec: D, sz: usize) -> Self {
@@ -422,7 +422,7 @@ where
 impl<T, D> ValueIterator<T, D>
 where
     T: FieldType,
-    Value<T>: TValue,
+    TimeValue<T>: Value,
     D: Decoder<T>,
 {
     pub fn try_next(&mut self) -> anyhow::Result<Option<T>> {
