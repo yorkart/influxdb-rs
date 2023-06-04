@@ -13,7 +13,7 @@ pub trait TSMBlock: Send + Sync {
     async fn read_block(
         &self,
         reader: &mut Reader,
-        entry: IndexEntry,
+        entry: &IndexEntry,
         buf: &mut Vec<u8>,
     ) -> anyhow::Result<()>;
     async fn free(&self) -> anyhow::Result<()>;
@@ -51,7 +51,7 @@ impl TSMBlock for DefaultBlockAccessor {
     async fn read_block(
         &self,
         reader: &mut Reader,
-        entry: IndexEntry,
+        entry: &IndexEntry,
         buf: &mut Vec<u8>,
     ) -> anyhow::Result<()> {
         self.inc_access();

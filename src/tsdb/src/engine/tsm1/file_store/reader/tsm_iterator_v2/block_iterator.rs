@@ -1,11 +1,13 @@
+use std::sync::Arc;
+
+use common_base::iterator::RefAsyncIterator;
+use influxdb_storage::opendal::Reader;
+use tokio::sync::Mutex;
+
 use crate::engine::tsm1::file_store::index::IndexEntries;
 use crate::engine::tsm1::file_store::reader::block_reader::TSMBlock;
 use crate::engine::tsm1::file_store::reader::index_reader::TSMIndex;
 use crate::engine::tsm1::file_store::reader::tsm_reader::ShareTSMReaderInner;
-use common_base::iterator::RefAsyncIterator;
-use influxdb_storage::opendal::Reader;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
 /// BlockIterator allows iterating over each block in a TSM file in order.  It provides
 /// raw access to the block bytes without decoding them.

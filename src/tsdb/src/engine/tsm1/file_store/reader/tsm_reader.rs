@@ -7,19 +7,18 @@ use influxdb_storage::StorageOperator;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::RwLock;
 
-use crate::engine::tsm1::file_store::index::{IndexEntries, IndexEntry};
+use crate::engine::tsm1::file_store::index::IndexEntries;
 use crate::engine::tsm1::file_store::reader::batch_deleter::BatchDeleter;
 use crate::engine::tsm1::file_store::reader::block_reader::{DefaultBlockAccessor, TSMBlock};
 use crate::engine::tsm1::file_store::reader::index_reader::{IndirectIndex, KeyIterator, TSMIndex};
-use crate::engine::tsm1::file_store::reader::tsm_iterator::iterator_builder::{
-    AsyncIteratorBuilder, BlockIteratorBuilder,
+use crate::engine::tsm1::file_store::reader::tsm_iterator_v2::field_reader::{
+    DefaultFieldReader, FieldReader,
 };
 use crate::engine::tsm1::file_store::stat::FileStat;
 use crate::engine::tsm1::file_store::tombstone::{
     IndexTombstonerFilter, TombstoneStat, Tombstoner,
 };
 use crate::engine::tsm1::file_store::{KeyRange, TimeRange, MAGIC_NUMBER, VERSION};
-use crate::engine::tsm1::value::values::BlockDecoder;
 
 /// TSMFile represents an on-disk TSM file.
 #[async_trait]
@@ -28,21 +27,21 @@ pub trait TSMReader: Sync + Send {
     /// has not be written or loaded from disk, the zero value is returned.
     fn path(&self) -> &str;
 
-    async fn block_iterator_builder(&self) -> anyhow::Result<Box<dyn AsyncIteratorBuilder>>;
+    async fn block_iterator_builder(&self) -> anyhow::Result<Box<dyn FieldReader>>;
 
-    async fn read_block_at<T>(&self, entry: IndexEntry, values: &mut T) -> anyhow::Result<()>
-    where
-        T: BlockDecoder;
+    // async fn read_block_at<T>(&self, entry: &IndexEntry, values: &mut T) -> anyhow::Result<()>
+    // where
+    //     T: BlockDecoder;
 
     /// Entries returns the index entries for all blocks for the given key.
     async fn read_entries(&self, key: &[u8], entries: &mut IndexEntries) -> anyhow::Result<()>;
 
     /// contains returns true if the file contains any values for the given
     /// key.
-    async fn contains(&mut self, key: &[u8]) -> anyhow::Result<bool>;
+    async fn contains(&self, key: &[u8]) -> anyhow::Result<bool>;
 
     /// overlaps_time_range returns true if the time range of the file intersect min and max.
-    async fn overlaps_time_range(&mut self, min: i64, max: i64) -> bool;
+    async fn overlaps_time_range(&self, min: i64, max: i64) -> bool;
 
     /// time_range returns the min and max time across all keys in the file.
     async fn time_range(&self) -> TimeRange;
@@ -59,10 +58,10 @@ pub trait TSMReader: Sync + Send {
     async fn key_iterator(&self) -> anyhow::Result<KeyIterator>;
 
     /// seek returns the position in the index with the key <= key.
-    async fn seek(&mut self, key: &[u8]) -> anyhow::Result<u64>;
+    async fn seek(&self, key: &[u8]) -> anyhow::Result<u64>;
 
     /// key_at returns the key located at index position idx.
-    async fn key_at(&mut self, idx: usize) -> anyhow::Result<Option<(Vec<u8>, u8)>>;
+    async fn key_at(&self, idx: usize) -> anyhow::Result<Option<(Vec<u8>, u8)>>;
 
     /// Type returns the block type of the values stored for the key.  Returns one of
     /// BlockFloat64, BlockInt64, BlockBoolean, BlockString.  If key does not exist,
@@ -258,40 +257,39 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
         self.op.path()
     }
 
-    async fn block_iterator_builder(&self) -> anyhow::Result<Box<dyn AsyncIteratorBuilder>> {
-        let op = self.op.reader().await.unwrap();
-        let inner = self.inner.clone();
-        let builder = Box::new(BlockIteratorBuilder::new(op, inner));
+    async fn block_iterator_builder(&self) -> anyhow::Result<Box<dyn FieldReader>> {
+        let reader = DefaultFieldReader::new(self.op.clone(), self.inner.clone()).await?;
+        let builder = Box::new(reader);
         Ok(builder)
     }
 
-    async fn read_block_at<T>(&self, entry: IndexEntry, values: &mut T) -> anyhow::Result<()>
-    where
-        T: BlockDecoder,
-    {
-        let mut reader = self.op.reader().await?;
-
-        let mut block = vec![];
-        self.inner
-            .block()
-            .read_block(&mut reader, entry, &mut block)
-            .await?;
-        values.decode(block.as_slice())?;
-
-        Ok(())
-    }
+    // async fn read_block_at<T>(&self, entry: &IndexEntry, values: &mut T) -> anyhow::Result<()>
+    // where
+    //     T: BlockDecoder,
+    // {
+    //     let mut reader = self.op.reader().await?;
+    //
+    //     let mut block = vec![];
+    //     self.inner
+    //         .block()
+    //         .read_block(&mut reader, entry, &mut block)
+    //         .await?;
+    //     values.decode(block.as_slice())?;
+    //
+    //     Ok(())
+    // }
 
     async fn read_entries(&self, key: &[u8], entries: &mut IndexEntries) -> anyhow::Result<()> {
         let mut reader = self.op.reader().await?;
         self.inner.index().entries(&mut reader, key, entries).await
     }
 
-    async fn contains(&mut self, key: &[u8]) -> anyhow::Result<bool> {
+    async fn contains(&self, key: &[u8]) -> anyhow::Result<bool> {
         let mut reader = self.op.reader().await?;
         self.inner.index().contains(&mut reader, key).await
     }
 
-    async fn overlaps_time_range(&mut self, min: i64, max: i64) -> bool {
+    async fn overlaps_time_range(&self, min: i64, max: i64) -> bool {
         self.inner.index().overlaps_time_range(min, max)
     }
 
@@ -316,12 +314,12 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
         self.inner.index().key_iterator(reader).await
     }
 
-    async fn seek(&mut self, key: &[u8]) -> anyhow::Result<u64> {
+    async fn seek(&self, key: &[u8]) -> anyhow::Result<u64> {
         let mut reader = self.op.reader().await?;
         self.inner.index().seek(&mut reader, key).await
     }
 
-    async fn key_at(&mut self, idx: usize) -> anyhow::Result<Option<(Vec<u8>, u8)>> {
+    async fn key_at(&self, idx: usize) -> anyhow::Result<Option<(Vec<u8>, u8)>> {
         let mut reader = self.op.reader().await?;
         self.inner.index().key_at(&mut reader, idx).await
     }

@@ -19,9 +19,9 @@ filepath = "0.1"
 
 # mmap
 #fmmap = { version = "0.3", features = ["tokio-async"] }
-memmap2 = "0.5"
+#memmap2 = "0.5"
 
-opendal = { version = "0.33", features = ["layers-tracing", "layers-metrics"] }
+opendal = { version = "0.36", features = ["layers-tracing", "layers-metrics"] }
 
 [dev-dependencies]
 tempfile = "3.5"

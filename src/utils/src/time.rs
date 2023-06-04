@@ -1,6 +1,7 @@
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
 use chrono::format::StrftimeItems;
 use chrono::NaiveDateTime;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// current timestamp
 pub fn now() -> Duration {

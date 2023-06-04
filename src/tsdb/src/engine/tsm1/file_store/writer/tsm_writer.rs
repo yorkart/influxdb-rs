@@ -12,7 +12,7 @@ use crate::engine::tsm1::file_store::writer::index_writer::{
     DirectIndex, FileIndexBuffer, IndexWriter, MemoryIndexBuffer,
 };
 use crate::engine::tsm1::file_store::{FSYNC_EVERY, HEADER, MAX_INDEX_ENTRIES, MAX_KEY_LENGTH};
-use crate::engine::tsm1::value::{TValues, Values};
+use crate::engine::tsm1::value::{Array, Values};
 
 /// TSMWriter writes TSM formatted key and values.
 #[async_trait]
@@ -262,7 +262,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::engine::tsm1::file_store::writer::tsm_writer::{DefaultTSMWriter, TSMWriter};
-    use crate::engine::tsm1::value::{Value, Values};
+    use crate::engine::tsm1::value::{TimeValue, Values};
 
     #[test]
     fn test_crc() {
@@ -278,7 +278,7 @@ mod tests {
 
         let mut w = DefaultTSMWriter::with_mem_buffer(&tsm_file).await.unwrap();
 
-        let values = Values::Float(vec![Value::new(0, 1.0)]);
+        let values = Values::Float(vec![TimeValue::new(0, 1.0)]);
 
         w.write("cpu".as_bytes(), values).await.unwrap();
         w.write_index().await.unwrap();

@@ -7,7 +7,7 @@ use common_base::iterator::AsyncIterator;
 use crate::engine::tsm1::file_store::reader::block_reader::TSMBlock;
 use crate::engine::tsm1::file_store::reader::index_reader::TSMIndex;
 use crate::engine::tsm1::file_store::reader::tsm_iterator::field_iterator::FloatFieldIterator;
-use crate::engine::tsm1::value::Value;
+use crate::engine::tsm1::value::TimeValue;
 
 #[async_trait]
 pub trait ArrayBuilder: Send + Sync {
@@ -26,7 +26,7 @@ where
     capacity: usize,
 
     itr: FloatFieldIterator<B, I>,
-    cur: Option<Value<f64>>,
+    cur: Option<TimeValue<f64>>,
 
     buf: Option<FloatValuesVec>,
 }
