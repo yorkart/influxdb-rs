@@ -11,8 +11,8 @@ use crate::engine::tsm1::file_store::index::IndexEntries;
 use crate::engine::tsm1::file_store::reader::batch_deleter::BatchDeleter;
 use crate::engine::tsm1::file_store::reader::block_reader::{DefaultBlockAccessor, TSMBlock};
 use crate::engine::tsm1::file_store::reader::index_reader::{IndirectIndex, KeyIterator, TSMIndex};
-use crate::engine::tsm1::file_store::reader::tsm_iterator::iterator_builder::{
-    AsyncIteratorBuilder, BlockIteratorBuilder,
+use crate::engine::tsm1::file_store::reader::tsm_iterator_v2::field_reader::{
+    DefaultFieldReader, FieldReader,
 };
 use crate::engine::tsm1::file_store::stat::FileStat;
 use crate::engine::tsm1::file_store::tombstone::{
@@ -27,7 +27,7 @@ pub trait TSMReader: Sync + Send {
     /// has not be written or loaded from disk, the zero value is returned.
     fn path(&self) -> &str;
 
-    async fn block_iterator_builder(&self) -> anyhow::Result<Box<dyn AsyncIteratorBuilder>>;
+    async fn block_iterator_builder(&self) -> anyhow::Result<Box<dyn FieldReader>>;
 
     // async fn read_block_at<T>(&self, entry: &IndexEntry, values: &mut T) -> anyhow::Result<()>
     // where
@@ -257,10 +257,10 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
         self.op.path()
     }
 
-    async fn block_iterator_builder(&self) -> anyhow::Result<Box<dyn AsyncIteratorBuilder>> {
-        let op = self.op.reader().await.unwrap();
+    async fn block_iterator_builder(&self) -> anyhow::Result<Box<dyn FieldReader>> {
+        let reader = self.op.reader().await.unwrap();
         let inner = self.inner.clone();
-        let builder = Box::new(BlockIteratorBuilder::new(op, inner));
+        let builder = Box::new(DefaultFieldReader::new(reader, inner));
         Ok(builder)
     }
 

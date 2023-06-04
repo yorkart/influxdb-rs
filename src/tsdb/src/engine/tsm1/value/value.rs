@@ -1,4 +1,5 @@
-use std::fmt::Debug;
+use influxdb_utils::time::unix_nano_to_time;
+use std::fmt::{Debug, Formatter};
 
 use crate::engine::tsm1::block::decoder::{
     decode_bool_block, decode_float_block, decode_integer_block, decode_string_block,
@@ -16,7 +17,7 @@ impl FieldType for bool {}
 impl FieldType for Vec<u8> {}
 impl FieldType for u64 {}
 
-#[derive(Debug, Clone, PartialEq, PartialOrd)]
+#[derive(Clone, PartialEq, PartialOrd)]
 pub struct TimeValue<T>
 where
     T: FieldType,
@@ -31,6 +32,18 @@ where
 {
     pub fn new(unix_nano: i64, value: T) -> Self {
         Self { unix_nano, value }
+    }
+}
+
+impl<T> Debug for TimeValue<T>
+where
+    T: FieldType,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TimeValue")
+            .field("unix_nano", &unix_nano_to_time(self.unix_nano))
+            .field("value", &self.value)
+            .finish()
     }
 }
 
