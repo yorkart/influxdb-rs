@@ -1,23 +1,26 @@
 use std::sync::Arc;
 
-use common_base::iterator::AsyncIterator;
+use common_base::iterator::RefAsyncIterator;
 use influxdb_storage::opendal::Reader;
+use influxdb_storage::StorageOperator;
 use tokio::sync::Mutex;
 
-use crate::engine::tsm1::file_store::index::IndexEntries;
+use crate::engine::tsm1::file_store::index::{IndexEntries, IndexEntry};
 use crate::engine::tsm1::file_store::reader::block_reader::TSMBlock;
 use crate::engine::tsm1::file_store::reader::index_reader::TSMIndex;
 use crate::engine::tsm1::file_store::reader::tsm_iterator_v2::block_iterator::BlockIterator;
-use crate::engine::tsm1::file_store::reader::tsm_iterator_v2::values_iterator::ValuesIterator;
+use crate::engine::tsm1::file_store::reader::tsm_iterator_v2::values_iterator::{
+    DefaultEntriesValuesReader, EntriesValuesReader,
+};
 use crate::engine::tsm1::file_store::reader::tsm_reader::ShareTSMReaderInner;
-use crate::engine::tsm1::value::{Array, ArrayRef, FloatValues};
+use crate::engine::tsm1::value::Array;
 
 #[async_trait]
 pub trait FieldReader: Send + Sync {
-    async fn read(
-        &self,
-        key: &[u8],
-    ) -> anyhow::Result<Box<dyn AsyncIterator<Item = Box<dyn Array>>>>;
+    fn path(&self) -> &str;
+    async fn read<'a, 'b>(&'a self, key: &[u8]) -> anyhow::Result<Box<dyn EntriesValuesReader>>;
+
+    async fn read_at(&self, entry: &IndexEntry, values: &mut Box<dyn Array>) -> anyhow::Result<()>;
 }
 
 pub struct DefaultFieldReader<B, I>
@@ -25,6 +28,7 @@ where
     B: TSMBlock,
     I: TSMIndex,
 {
+    path: String,
     reader: Arc<Mutex<Reader>>,
     inner: ShareTSMReaderInner<I, B>,
 }
@@ -34,11 +38,17 @@ where
     B: TSMBlock,
     I: TSMIndex,
 {
-    pub(crate) fn new(reader: Reader, inner: ShareTSMReaderInner<I, B>) -> Self {
-        Self {
+    pub(crate) async fn new(
+        op: StorageOperator,
+        inner: ShareTSMReaderInner<I, B>,
+    ) -> anyhow::Result<Self> {
+        let reader = op.reader().await?;
+        let path = op.path().to_string();
+        Ok(Self {
+            path,
             reader: Arc::new(Mutex::new(reader)),
             inner,
-        }
+        })
     }
 
     async fn entries(&self, key: &[u8]) -> anyhow::Result<IndexEntries> {
@@ -58,54 +68,35 @@ where
     B: TSMBlock + 'static,
     I: TSMIndex + 'static,
 {
-    async fn read(&self, key: &[u8]) -> anyhow::Result<Box<dyn AsyncIterator<Item = ArrayRef>>> {
+    fn path(&self) -> &str {
+        self.path.as_str()
+    }
+
+    async fn read<'a, 'b>(&'a self, key: &[u8]) -> anyhow::Result<Box<dyn EntriesValuesReader>> {
         let entries = self.entries(key).await?;
         let typ = entries.typ;
         let itr: BlockIterator<B, I> =
             BlockIterator::new(entries, self.reader.clone(), self.inner.clone()).await?;
         match typ {
             0 => {
-                let v_iter: ValuesIterator<B, I, FloatValues> = ValuesIterator::new(itr);
-                Ok(Box::new(v_iter))
+                let reader = DefaultEntriesValuesReader::new(itr);
+                Ok(Box::new(reader))
             }
             _ => Err(anyhow!("unknown type: {}", typ)),
         }
     }
-}
 
-// #[async_trait]
-// impl<B, I> FieldReader for DefaultFieldReader<B, I>
-// where
-//     B: TSMBlock + 'static,
-//     I: TSMIndex + 'static,
-// {
-//     async fn build(
-//         &self,
-//         key: &[u8],
-//         fields: &[&[u8]],
-//     ) -> anyhow::Result<Box<dyn AsyncIterator<Item = Chunk<Arc<dyn Array>>>>> {
-//         let mut builders = Vec::with_capacity(fields.len());
-//
-//         for field in fields {
-//             let key = series_field_key(key, field);
-//
-//             let entries = self.entries(key.as_slice()).await?;
-//             let typ = entries.typ;
-//             let itr: BlockIterator<B, I> =
-//                 BlockIterator::new(entries, self.reader.clone(), self.inner.clone()).await?;
-//             let builder = match typ {
-//                 0 => {
-//                     let field_itr = FloatFieldIterator::new(itr);
-//                     let array_builder = FloatArrayBuilder::new(field_itr, 1024);
-//                     let array_builder: Box<dyn ArrayBuilder> = Box::new(array_builder);
-//                     Ok(array_builder)
-//                 }
-//                 _ => Err(anyhow!("unknown type: {}", typ)),
-//             }?;
-//             builders.push(builder);
-//         }
-//
-//         let itr = FieldsBatchIterator::new(builders, 1024).await?;
-//         Ok(Box::new(itr))
-//     }
-// }
+    async fn read_at(&self, entry: &IndexEntry, values: &mut Box<dyn Array>) -> anyhow::Result<()> {
+        let entries = IndexEntries {
+            typ: 0, // ignore this
+            entries: vec![entry.clone()],
+        };
+        let mut itr: BlockIterator<B, I> =
+            BlockIterator::new(entries, self.reader.clone(), self.inner.clone()).await?;
+        if let Some(v) = itr.try_next().await? {
+            values.decode(v)?;
+        }
+
+        Ok(())
+    }
+}

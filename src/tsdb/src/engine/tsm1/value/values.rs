@@ -10,6 +10,7 @@ pub trait Array: Send + Sync + Debug + 'static {
     fn min_time(&self) -> i64;
     fn max_time(&self) -> i64;
     fn len(&self) -> usize;
+    fn clear(&mut self);
     fn size(&self) -> usize;
     fn ordered(&self) -> bool;
     fn deduplicate(&mut self);
@@ -17,7 +18,7 @@ pub trait Array: Send + Sync + Debug + 'static {
     fn include(&mut self, min: i64, max: i64);
     fn find_range(&self, min: i64, max: i64) -> (isize, isize);
     // fn merge(self, b: Box<dyn Array>) -> Box<dyn Array>;
-    // fn decode(&mut self, block: &[u8]) -> anyhow::Result<()>;
+    fn decode(&mut self, block: &[u8]) -> anyhow::Result<()>;
     fn decode_v1(block: &[u8]) -> anyhow::Result<Box<dyn Array>>
     where
         Self: Sized;
@@ -52,6 +53,10 @@ where
 
     fn len(&self) -> usize {
         self.len()
+    }
+
+    fn clear(&mut self) {
+        self.clear();
     }
 
     fn size(&self) -> usize {
@@ -227,9 +232,9 @@ where
     //     out
     // }
 
-    // fn decode(&mut self, block: &[u8]) -> anyhow::Result<()> {
-    //     Value::decode(self, block)
-    // }
+    fn decode(&mut self, block: &[u8]) -> anyhow::Result<()> {
+        Value::decode(self, block)
+    }
 
     fn decode_v1(block: &[u8]) -> anyhow::Result<Box<dyn Array>>
     where
@@ -360,6 +365,10 @@ impl Array for Values {
         todo!()
     }
 
+    fn clear(&mut self) {
+        todo!()
+    }
+
     fn size(&self) -> usize {
         match self {
             Self::Float(values) => values.size(),
@@ -460,15 +469,15 @@ impl Array for Values {
     //     }
     // }
 
-    // fn decode(&mut self, block: &[u8]) -> anyhow::Result<()> {
-    //     match self {
-    //         Self::Float(values) => values.decode(block),
-    //         Self::Integer(values) => values.decode(block),
-    //         Self::Bool(values) => values.decode(block),
-    //         Self::String(values) => values.decode(block),
-    //         Self::Unsigned(values) => values.decode(block),
-    //     }
-    // }
+    fn decode(&mut self, block: &[u8]) -> anyhow::Result<()> {
+        match self {
+            Self::Float(values) => values.decode(block),
+            Self::Integer(values) => values.decode(block),
+            Self::Bool(values) => values.decode(block),
+            Self::String(values) => values.decode(block),
+            Self::Unsigned(values) => values.decode(block),
+        }
+    }
 
     fn decode_v1(_block: &[u8]) -> anyhow::Result<Box<dyn Array>> {
         todo!()

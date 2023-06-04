@@ -5,4 +5,4 @@ pub mod index_reader;
 // pub mod tsm_iterator;
 pub mod tsm_iterator_v2;
 pub mod tsm_reader;
-// pub mod tsm_readers;
+pub mod tsm_readers;

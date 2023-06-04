@@ -1,7 +1,7 @@
 use crate::engine::tsm1::file_store::reader::tsm_readers::location::{
     seek_asc, seek_desc, sort_asc, sort_desc, Location,
 };
-use crate::engine::tsm1::value::{FloatValues, TValues};
+use crate::engine::tsm1::value::{Array, FloatValues};
 
 pub struct KeyCursor {
     key: Vec<u8>,
@@ -109,7 +109,7 @@ impl KeyCursor {
         }
     }
 
-    pub async fn read_float_block(&mut self, values: &mut FloatValues) -> anyhow::Result<()> {
+    pub async fn read_float_block(&mut self, values: &mut Box<dyn Array>) -> anyhow::Result<()> {
         // 1. 读取第一个有值的block
         loop {
             // No matching blocks to decode
@@ -121,7 +121,7 @@ impl KeyCursor {
             let first = &self.seeks[self.current[0]];
 
             values.clear();
-            first.reader.read_block_at(&first.entry, values).await?;
+            first.reader.read_at(&first.entry, values).await?;
 
             // Remove values we already read
             values.exclude(first.read_min, first.read_max);
@@ -139,7 +139,8 @@ impl KeyCursor {
         // 2. 只有一个block，直接返回
         if self.current.len() == 1 {
             if values.len() > 0 {
-                &mut self.seeks[self.current[0]].mark_read(values.min_time(), values.max_time());
+                let _ = &mut self.seeks[self.current[0]]
+                    .mark_read(values.min_time(), values.max_time());
             }
             return Ok(());
         }
@@ -189,10 +190,11 @@ impl KeyCursor {
                     continue;
                 }
 
-                let mut v: FloatValues = vec![];
-                cur.reader.read_block_at(&cur.entry, &mut v).await?;
+                let v: FloatValues = vec![];
+                let mut v: Box<dyn Array> = Box::new(v);
+                cur.reader.read_at(&cur.entry, &mut v).await?;
 
-                cur.reader.tombstone_range(self.key.as_slice()).await;
+                // cur.reader.tombstone_range(self.key.as_slice()).await;
             }
         }
 

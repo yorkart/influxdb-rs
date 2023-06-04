@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use crate::engine::tsm1::file_store::index::IndexEntry;
-use crate::engine::tsm1::file_store::reader::tsm_reader::TSMReader;
+use crate::engine::tsm1::file_store::reader::tsm_iterator_v2::field_reader::FieldReader;
 
 pub struct Location {
-    pub(crate) reader: Arc<Box<dyn TSMReader>>,
+    pub(crate) reader: Arc<Box<dyn FieldReader>>,
     pub(crate) entry: IndexEntry,
 
     pub(crate) read_min: i64,
@@ -12,7 +12,7 @@ pub struct Location {
 }
 
 impl Location {
-    pub(crate) fn new(reader: Arc<Box<dyn TSMReader>>, entry: IndexEntry) -> Self {
+    pub(crate) fn new(reader: Arc<Box<dyn FieldReader>>, entry: IndexEntry) -> Self {
         Self {
             reader,
             entry,

@@ -258,9 +258,8 @@ impl TSMReader for DefaultTSMReader<IndirectIndex, DefaultBlockAccessor> {
     }
 
     async fn block_iterator_builder(&self) -> anyhow::Result<Box<dyn FieldReader>> {
-        let reader = self.op.reader().await.unwrap();
-        let inner = self.inner.clone();
-        let builder = Box::new(DefaultFieldReader::new(reader, inner));
+        let reader = DefaultFieldReader::new(self.op.clone(), self.inner.clone()).await?;
+        let builder = Box::new(reader);
         Ok(builder)
     }
 

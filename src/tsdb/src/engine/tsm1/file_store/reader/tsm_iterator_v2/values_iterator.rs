@@ -1,48 +1,43 @@
-use common_base::iterator::{AsyncIterator, RefAsyncIterator};
-use std::marker::PhantomData;
+use common_base::iterator::RefAsyncIterator;
 
 use crate::engine::tsm1::file_store::reader::block_reader::TSMBlock;
 use crate::engine::tsm1::file_store::reader::index_reader::TSMIndex;
 use crate::engine::tsm1::file_store::reader::tsm_iterator_v2::block_iterator::BlockIterator;
-use crate::engine::tsm1::value::{Array, ArrayRef};
+use crate::engine::tsm1::value::Array;
 
-pub struct ValuesIterator<B, I, A>
-where
-    B: TSMBlock,
-    I: TSMIndex,
-    A: Array,
-{
-    block_itr: BlockIterator<B, I>,
-    p: PhantomData<A>,
+#[async_trait]
+pub trait EntriesValuesReader {
+    async fn try_next(&mut self, value: &mut Box<dyn Array>) -> anyhow::Result<Option<()>>;
 }
 
-impl<B, I, A> ValuesIterator<B, I, A>
+pub struct DefaultEntriesValuesReader<B, I>
 where
     B: TSMBlock,
     I: TSMIndex,
-    A: Array,
+{
+    block_itr: BlockIterator<B, I>,
+}
+
+impl<B, I> DefaultEntriesValuesReader<B, I>
+where
+    B: TSMBlock,
+    I: TSMIndex,
 {
     pub fn new(block_itr: BlockIterator<B, I>) -> Self {
-        Self {
-            block_itr,
-            p: PhantomData::default(),
-        }
+        Self { block_itr }
     }
 }
 
 #[async_trait]
-impl<B, I, A> AsyncIterator for ValuesIterator<B, I, A>
+impl<B, I> EntriesValuesReader for DefaultEntriesValuesReader<B, I>
 where
     B: TSMBlock,
     I: TSMIndex,
-    A: Array,
 {
-    type Item = ArrayRef;
-
-    async fn try_next(&mut self) -> anyhow::Result<Option<Self::Item>> {
+    async fn try_next(&mut self, value: &mut Box<dyn Array>) -> anyhow::Result<Option<()>> {
         if let Some(v) = self.block_itr.try_next().await? {
-            let array = A::decode_v1(v)?;
-            Ok(Some(array))
+            value.decode(v)?;
+            Ok(Some(()))
         } else {
             Ok(None)
         }
