@@ -63,7 +63,7 @@ impl SeriesIndexHeader {
     }
 
     pub async fn read_from<R: AsyncRead + AsyncSeek + Send + Unpin>(
-        mut r: R,
+        r: &mut R,
     ) -> anyhow::Result<(Self, usize)> {
         let mut i = 0;
 
@@ -96,11 +96,11 @@ impl SeriesIndexHeader {
         i += 8;
 
         // Read key/id map position.
-        let (key_id_map, len) = Section::read_from(&mut r).await?;
+        let (key_id_map, len) = Section::read_from(r).await?;
         i += len;
 
         // Read offset/id map position.
-        let (id_offset_map, len) = Section::read_from(&mut r).await?;
+        let (id_offset_map, len) = Section::read_from(r).await?;
         i += len;
 
         Ok((

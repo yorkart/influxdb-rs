@@ -3,6 +3,7 @@ use std::io::{Cursor, SeekFrom};
 
 use bytes::Buf;
 use common_base::iterator::AsyncIterator;
+use crc32fast::Hasher;
 use influxdb_storage::opendal::Reader;
 use influxdb_storage::opendal::Writer;
 use influxdb_storage::StorageOperator;
@@ -93,21 +94,25 @@ impl SeriesEntry {
     }
 
     pub async fn read_from<R: AsyncRead + AsyncSeek + Send + Unpin>(
-        mut r: R,
+        r: &mut R,
+        version: SeriesSegmentVersion,
     ) -> anyhow::Result<(Self, usize)> {
+        let mut h = Hasher::new();
         let mut n = 0;
 
         // If flag byte is zero then no more entries exist.
         let flag = r.read_u8().await?;
         n += 1;
+        h.update(&[flag]);
 
         // series id
         let id = r.read_u64().await?;
         n += 8;
+        h.update(&id.to_be_bytes());
 
         let (flag, len) = match flag {
             SERIES_ENTRY_INSERT_FLAG => {
-                let (key, len) = read_series_key(r).await?;
+                let (key, len) = read_series_key(r, &mut h).await?;
                 Ok((SeriesEntryFlag::InsertFlag(key), len))
             }
             SERIES_ENTRY_TOMBSTONE_FLAG => Ok((SeriesEntryFlag::TombstoneFlag, 0)),
@@ -115,32 +120,74 @@ impl SeriesEntry {
         }?;
         n += len;
 
+        let checksum = h.finalize();
+        match version {
+            SeriesSegmentVersion::V1 => {}
+            SeriesSegmentVersion::V2 => {
+                // let mut crc = [0u8; 4];
+                let crc = r.read_u32().await?;
+                if checksum != crc {
+                    return Err(anyhow!("series segment checksum mismatch"));
+                }
+
+                n += len;
+            }
+        }
         Ok((Self::new(flag, id), n))
+    }
+}
+
+#[derive(Copy, Clone)]
+pub enum SeriesSegmentVersion {
+    V1,
+    V2,
+}
+
+impl Into<u8> for SeriesSegmentVersion {
+    fn into(self) -> u8 {
+        match self {
+            Self::V1 => SERIES_SEGMENT_VERSION,
+            Self::V2 => 2,
+        }
+    }
+}
+
+impl TryFrom<u8> for SeriesSegmentVersion {
+    type Error = anyhow::Error;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        if value == SERIES_SEGMENT_VERSION {
+            Ok(SeriesSegmentVersion::V1)
+        } else if value == 2 {
+            Ok(SeriesSegmentVersion::V2)
+        } else {
+            Err(anyhow!("unknown series segment version {}", value))
+        }
     }
 }
 
 /// SeriesSegmentHeader represents the header of a series segment.
 pub struct SeriesSegmentHeader {
-    version: u8,
+    version: SeriesSegmentVersion,
     // crc: u32,
 }
 
 impl SeriesSegmentHeader {
     pub fn new() -> Self {
         Self {
-            version: SERIES_SEGMENT_VERSION,
+            version: SeriesSegmentVersion::V1,
         }
     }
 
     pub async fn write_to<W: AsyncWrite + Send + Unpin>(&self, mut w: W) -> anyhow::Result<()> {
         w.write(SERIES_SEGMENT_MAGIC.as_bytes()).await?;
-        w.write_u8(self.version).await?;
+        w.write_u8(self.version.into()).await?;
 
         Ok(())
     }
 
     pub async fn read_from<R: AsyncRead + AsyncSeek + Send + Unpin>(
-        mut r: R,
+        r: &mut R,
     ) -> anyhow::Result<(Self, usize)> {
         let mut value = [0_u8; SERIES_SEGMENT_HEADER_SIZE];
         let n = r.read(value.as_mut()).await?;
@@ -154,7 +201,7 @@ impl SeriesSegmentHeader {
         }
 
         let mut cursor = Cursor::new(&value[SERIES_SEGMENT_MAGIC.len()..]);
-        let version = cursor.get_u8();
+        let version = SeriesSegmentVersion::try_from(cursor.get_u8())?;
 
         Ok((Self { version }, n))
     }
@@ -162,6 +209,7 @@ impl SeriesSegmentHeader {
 
 pub struct SeriesSegment {
     segment_id: u16,
+    header: SeriesSegmentHeader,
 
     op: StorageOperator,
     writer: Option<Writer>,
@@ -179,12 +227,12 @@ impl SeriesSegment {
         }
 
         // check header
-        let (_header, _) = SeriesSegmentHeader::read_from(&mut reader).await?;
+        let (header, _) = SeriesSegmentHeader::read_from(&mut reader).await?;
 
         let write_offset = if verify {
             let mut write_offset = SERIES_SEGMENT_HEADER_SIZE as u32;
             while write_offset < file_size as u32 {
-                let (_entry, len) = SeriesEntry::read_from(&mut reader).await?;
+                let (_entry, len) = SeriesEntry::read_from(&mut reader, header.version).await?;
                 write_offset += len as u32;
             }
             write_offset
@@ -200,6 +248,7 @@ impl SeriesSegment {
         let max_file_size = series_segment_size(segment_id);
         Ok(Self {
             segment_id,
+            header,
             op,
             writer: None,
             write_offset,
@@ -273,8 +322,14 @@ impl SeriesSegment {
     /// create series iterator
     pub async fn series_iterator(&self, series_pos: u32) -> anyhow::Result<SeriesEntryIterator> {
         let reader = self.op.reader().await?;
-        let itr = SeriesEntryIterator::new(reader, series_pos, self.write_offset, self.segment_id)
-            .await?;
+        let itr = SeriesEntryIterator::new(
+            reader,
+            series_pos,
+            self.write_offset,
+            self.segment_id,
+            self.header.version,
+        )
+        .await?;
         Ok(itr)
     }
 
@@ -324,6 +379,7 @@ pub struct SeriesEntryIterator {
     read_offset: u32,
     max_offset: u32,
     segment_id: u16,
+    version: SeriesSegmentVersion,
 }
 
 impl SeriesEntryIterator {
@@ -332,6 +388,7 @@ impl SeriesEntryIterator {
         series_pos: u32,
         max_offset: u32,
         segment_id: u16,
+        version: SeriesSegmentVersion,
     ) -> anyhow::Result<Self> {
         // skip header & header check
         let offset = SERIES_SEGMENT_HEADER_SIZE as u32 + series_pos;
@@ -341,6 +398,7 @@ impl SeriesEntryIterator {
             read_offset: offset,
             max_offset,
             segment_id,
+            version,
         })
     }
 
@@ -350,7 +408,7 @@ impl SeriesEntryIterator {
             return Ok(None);
         }
 
-        let (se, len) = SeriesEntry::read_from(&mut self.reader).await?;
+        let (se, len) = SeriesEntry::read_from(&mut self.reader, self.version).await?;
         self.read_offset += len as u32;
 
         let offset = join_series_offset(self.segment_id, entry_offset as u32);

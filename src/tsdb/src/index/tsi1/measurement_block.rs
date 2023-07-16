@@ -52,7 +52,7 @@ pub struct MeasurementBlockTrailer {
 
 impl MeasurementBlockTrailer {
     pub async fn read_from<R: AsyncRead + AsyncSeek + Send + Unpin>(
-        mut reader: R,
+        reader: &mut R,
         section: &Section,
     ) -> anyhow::Result<Self> {
         if section.size != MEASUREMENT_TRAILER_SIZE as u64 {
@@ -71,16 +71,16 @@ impl MeasurementBlockTrailer {
         reader.seek(SeekFrom::Start(section.offset)).await?;
 
         // Read data section info.
-        let (data, _) = Section::read_from(&mut reader).await?;
+        let (data, _) = Section::read_from(reader).await?;
 
         // Read measurement block info.
-        let (hash_index, _) = Section::read_from(&mut reader).await?;
+        let (hash_index, _) = Section::read_from(reader).await?;
 
         // Read measurement sketch info.
-        let (sketch, _) = Section::read_from(&mut reader).await?;
+        let (sketch, _) = Section::read_from(reader).await?;
 
         // Read tombstone measurement sketch info.
-        let (t_sketch, _) = Section::read_from(&mut reader).await?;
+        let (t_sketch, _) = Section::read_from(reader).await?;
 
         Ok(Self {
             version,
