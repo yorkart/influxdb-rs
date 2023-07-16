@@ -22,7 +22,7 @@ impl Section {
     }
 
     pub async fn read_from<R: AsyncRead + AsyncSeek + Send + Unpin>(
-        mut r: R,
+        r: &mut R,
     ) -> anyhow::Result<(Self, usize)> {
         let mut i = 0;
 

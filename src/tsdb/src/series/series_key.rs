@@ -3,13 +3,15 @@ use std::io::{Cursor, SeekFrom};
 use std::str::from_utf8_unchecked;
 
 use bytes::Buf;
+use crc32fast::Hasher;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt};
 
 use crate::engine::tsm1::codec::varint::{VarInt, MAX_VARINT_LEN64};
 
 /// read_series_key returns the series key from the beginning of the buffer.
 pub async fn read_series_key<R: AsyncRead + AsyncSeek + Send + Unpin>(
-    mut r: R,
+    r: &mut R,
+    h: &mut Hasher,
 ) -> anyhow::Result<(Vec<u8>, usize)> {
     let offset = r.seek(SeekFrom::Current(0)).await?;
 
@@ -17,6 +19,7 @@ pub async fn read_series_key<R: AsyncRead + AsyncSeek + Send + Unpin>(
     r.read(buf.as_mut()).await?;
 
     let (sz, v_len) = u64::decode_var(buf.as_slice()).ok_or(anyhow!("varint parse error"))?;
+    h.update(&buf[..v_len]);
 
     r.seek(SeekFrom::Start(offset + v_len as u64)).await?;
 
@@ -26,6 +29,7 @@ pub async fn read_series_key<R: AsyncRead + AsyncSeek + Send + Unpin>(
     if k_len != sz as usize {
         return Err(anyhow!("not enough data for series key"));
     }
+    h.update(&key[..k_len]);
 
     Ok((key, v_len + k_len))
 }
@@ -43,6 +47,9 @@ impl<'a> SeriesKeyDecoder<'a> {
         let mut n = 0_usize;
 
         let mut cur = Cursor::new(series_key);
+        if cur.remaining() < 2 {
+            panic!("xxx")
+        }
         let name_len = cur.get_u16() as usize;
         n += 2;
         let name = &series_key[n..n + name_len];
