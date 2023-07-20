@@ -137,7 +137,7 @@ impl SeriesEntry {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum SeriesSegmentVersion {
     V1,
     V2,
@@ -288,6 +288,10 @@ impl SeriesSegment {
             writer.close().await?;
         }
         Ok(())
+    }
+
+    pub fn version(&self) -> SeriesSegmentVersion {
+        self.header.version
     }
 
     /// write_log_entry writes entry data into the segment.
