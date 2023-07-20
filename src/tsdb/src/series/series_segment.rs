@@ -338,7 +338,7 @@ impl SeriesSegment {
         let mut itr = self.series_iterator(0).await?;
 
         let mut ids = Vec::new();
-        while let Some((entry, _offset)) = itr.next().await? {
+        while let Some((entry, _offset, _size)) = itr.next().await? {
             ids.push(entry.id);
         }
 
@@ -350,7 +350,7 @@ impl SeriesSegment {
         let mut itr = self.series_iterator(0).await?;
 
         let mut max = 0;
-        while let Some((entry, _offset)) = itr.next().await? {
+        while let Some((entry, _offset, _size)) = itr.next().await? {
             if let SeriesEntryFlag::InsertFlag(_) = &entry.flag {
                 if entry.id > max {
                     max = entry.id;
@@ -402,7 +402,7 @@ impl SeriesEntryIterator {
         })
     }
 
-    async fn next(&mut self) -> anyhow::Result<Option<(SeriesEntry, u64)>> {
+    async fn next(&mut self) -> anyhow::Result<Option<(SeriesEntry, u64, usize)>> {
         let entry_offset = self.read_offset;
         if entry_offset >= self.max_offset {
             return Ok(None);
@@ -412,13 +412,13 @@ impl SeriesEntryIterator {
         self.read_offset += len as u32;
 
         let offset = join_series_offset(self.segment_id, entry_offset as u32);
-        Ok(Some((se, offset)))
+        Ok(Some((se, offset, len)))
     }
 }
 
 #[async_trait]
 impl AsyncIterator for SeriesEntryIterator {
-    type Item = (SeriesEntry, u64);
+    type Item = (SeriesEntry, u64, usize);
 
     async fn try_next(&mut self) -> anyhow::Result<Option<Self::Item>> {
         self.next().await
@@ -491,7 +491,7 @@ pub async fn read_series_key_from_segments(
     if let Some(segment) = find_segment(segments, segment_id) {
         let pos = pos - SERIES_ENTRY_HEADER_SIZE as u32;
         let mut itr = segment.series_iterator(pos).await?;
-        if let Some((entry, _len)) = itr.next().await? {
+        if let Some((entry, _len, _size)) = itr.next().await? {
             return match entry.flag {
                 SeriesEntryFlag::InsertFlag(key) => Ok(Some(key)),
                 SeriesEntryFlag::TombstoneFlag => Err(anyhow!("the position is tombstone")),
@@ -516,8 +516,8 @@ mod tests {
         let segment = SeriesSegment::open(0, op, false).await?;
 
         let mut itr = segment.series_iterator(0).await?;
-        while let Some((entry, offset)) = itr.try_next().await? {
-            println!(">{:?} @{}", entry, offset);
+        while let Some((entry, offset, size)) = itr.try_next().await? {
+            println!(">{:?} @ {}, {}", entry, offset, size);
         }
 
         Ok(())

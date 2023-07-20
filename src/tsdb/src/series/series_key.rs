@@ -81,6 +81,10 @@ impl<'a> Debug for SeriesKeyDecoder<'a> {
         while let Some((k, v)) = itr.next().unwrap() {
             let k = unsafe { from_utf8_unchecked(k) };
             let v = unsafe { from_utf8_unchecked(v) };
+            if k.len() == 0 || v.len() == 0 {
+                println!("for debug: k or v is empty");
+                panic!("k or v is empty");
+            }
             n.entry(&format!("{}: {}", k, v));
         }
 
