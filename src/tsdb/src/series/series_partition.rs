@@ -220,7 +220,7 @@ impl SeriesPartitionInner {
             }
 
             let mut itr = segment.series_iterator(pos).await?;
-            let (entry, _) = itr.try_next().await?.ok_or(anyhow!("key not found"))?;
+            let (entry, _, _) = itr.try_next().await?.ok_or(anyhow!("key not found"))?;
             return entry.flag.into_key();
         }
 

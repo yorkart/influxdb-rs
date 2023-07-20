@@ -26,8 +26,8 @@ async fn main() -> anyhow::Result<()> {
 
     let mut itr = segment.series_iterator(0).await?;
     let mut i = 0;
-    while let Some((entry, offset)) = itr.try_next().await? {
-        println!("{:010}>{:?} @{}", i, entry, offset);
+    while let Some((entry, offset, size)) = itr.try_next().await? {
+        println!("{:010}>{:?} @ {}, {}", i, entry, offset, size);
         i += 1;
     }
 
