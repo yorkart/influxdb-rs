@@ -15,6 +15,7 @@ use crate::series::series_key::{read_series_key, SeriesKeyDecoder};
 const TMP_FILE_SUFFIX: &'static str = ".initializing";
 
 pub(crate) const SERIES_SEGMENT_VERSION: u8 = 1;
+pub(crate) const SERIES_SEGMENT_VERSION2: u8 = 2;
 pub(crate) const SERIES_SEGMENT_MAGIC: &'static str = "SSEG";
 pub(crate) const SERIES_SEGMENT_HEADER_SIZE: usize = 4 + 1; //  + 4;
 
@@ -147,7 +148,7 @@ impl Into<u8> for SeriesSegmentVersion {
     fn into(self) -> u8 {
         match self {
             Self::V1 => SERIES_SEGMENT_VERSION,
-            Self::V2 => 2,
+            Self::V2 => SERIES_SEGMENT_VERSION2,
         }
     }
 }
@@ -158,7 +159,7 @@ impl TryFrom<u8> for SeriesSegmentVersion {
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         if value == SERIES_SEGMENT_VERSION {
             Ok(SeriesSegmentVersion::V1)
-        } else if value == 2 {
+        } else if value == SERIES_SEGMENT_VERSION2 {
             Ok(SeriesSegmentVersion::V2)
         } else {
             Err(anyhow!("unknown series segment version {}", value))
