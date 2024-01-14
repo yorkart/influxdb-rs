@@ -1,5 +1,6 @@
 use std::any::Any;
 use std::fmt::Debug;
+use std::ops::{Deref, DerefMut};
 
 use crate::engine::tsm1::value::value::{TimeValue, Value};
 use crate::engine::tsm1::value::FieldType;
@@ -25,6 +26,62 @@ pub trait Array: Send + Sync + Debug + 'static {
 }
 
 pub type ArrayRef = Box<dyn Array>;
+
+#[derive(Debug)]
+pub struct ReuseVec<T> {
+    vec: Vec<T>,
+    start: usize,
+}
+
+impl<T> ReuseVec<T> {
+    pub fn new() -> Self {
+        Self {
+            vec: Vec::new(),
+            start: 0,
+        }
+    }
+
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            vec: Vec::with_capacity(capacity),
+            start: 0,
+        }
+    }
+
+    pub fn push(&mut self, v: T) {
+        self.vec.push(v);
+    }
+
+    pub fn skip(&mut self, n: usize) {
+        self.start += n;
+    }
+
+    pub fn truncate(&mut self, n: usize) {
+        self.vec.truncate(n + self.start);
+    }
+
+    pub fn len(&self) -> usize {
+        self.vec.len() - self.start
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.vec.capacity() - self.start
+    }
+}
+
+impl<T> Deref for ReuseVec<T> {
+    type Target = [T];
+
+    fn deref(&self) -> &Self::Target {
+        &self.vec[self.start..]
+    }
+}
+
+impl<T> DerefMut for ReuseVec<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.vec[self.start..]
+    }
+}
 
 pub type TypeValues<T> = Vec<TimeValue<T>>;
 

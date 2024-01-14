@@ -18,6 +18,7 @@ use crate::engine::tsm1::value::Array;
 #[async_trait]
 pub trait FieldReader: Send + Sync {
     fn path(&self) -> &str;
+
     async fn read<'a, 'b>(&'a self, key: &[u8]) -> anyhow::Result<Box<dyn EntriesValuesReader>>;
 
     async fn read_at(&self, entry: &IndexEntry, values: &mut Box<dyn Array>) -> anyhow::Result<()>;

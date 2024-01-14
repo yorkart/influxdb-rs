@@ -41,6 +41,14 @@ impl KeyCursor {
         }
     }
 
+    fn current(&self, n: usize) -> &Location {
+        &self.seeks[self.current[n]]
+    }
+
+    fn current_mut(&mut self, n: usize) -> &mut Location {
+        &mut self.seeks[self.current[n]]
+    }
+
     /// Next moves the cursor to the next position.
     /// Data should be read by the ReadBlock functions.
     pub fn next(&mut self) {
@@ -48,7 +56,7 @@ impl KeyCursor {
             return;
         }
 
-        let location = &self.seeks[self.current[0]];
+        let location = self.current(0);
         // Do we still have unread values in the current block
         if location.read() {
             return;
