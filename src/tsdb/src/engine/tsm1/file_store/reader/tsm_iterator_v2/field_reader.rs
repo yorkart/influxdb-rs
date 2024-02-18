@@ -75,16 +75,10 @@ where
 
     async fn read<'a, 'b>(&'a self, key: &[u8]) -> anyhow::Result<Box<dyn EntriesValuesReader>> {
         let entries = self.entries(key).await?;
-        let typ = entries.typ;
         let itr: BlockIterator<B, I> =
             BlockIterator::new(entries, self.reader.clone(), self.inner.clone()).await?;
-        match typ {
-            0 => {
-                let reader = DefaultEntriesValuesReader::new(itr);
-                Ok(Box::new(reader))
-            }
-            _ => Err(anyhow!("unknown type: {}", typ)),
-        }
+        let reader = DefaultEntriesValuesReader::new(itr);
+        Ok(Box::new(reader))
     }
 
     async fn read_at(&self, entry: &IndexEntry, values: &mut Box<dyn Array>) -> anyhow::Result<()> {

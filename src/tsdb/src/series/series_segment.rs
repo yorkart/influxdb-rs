@@ -21,6 +21,7 @@ pub(crate) const SERIES_SEGMENT_HEADER_SIZE: usize = 4 + 1; //  + 4;
 
 pub(crate) const SERIES_ENTRY_HEADER_SIZE: usize = 1 + 8;
 
+const SERIES_ENTRY_EOF_FLAG: u8 = 0x00;
 const SERIES_ENTRY_INSERT_FLAG: u8 = 0x01;
 const SERIES_ENTRY_TOMBSTONE_FLAG: u8 = 0x02;
 
@@ -117,6 +118,7 @@ impl SeriesEntry {
                 Ok((SeriesEntryFlag::InsertFlag(key), len))
             }
             SERIES_ENTRY_TOMBSTONE_FLAG => Ok((SeriesEntryFlag::TombstoneFlag, 0)),
+            SERIES_ENTRY_EOF_FLAG => Err(anyhow!("reached EOF")),
             _ => Err(anyhow!("unknown series entry flag: {}", flag)),
         }?;
         n += len;

@@ -22,8 +22,8 @@ pub struct FileStoreIterator {
 impl FileStoreIterator {
     pub async fn new(
         tsm_readers: Vec<impl TSMReader>,
-        series: &[u8],
-        fields: &[Vec<u8>],
+        _series: &[u8],
+        _fields: &[Vec<u8>],
     ) -> anyhow::Result<Self> {
         for tsm_reader in &tsm_readers {
             let builder = tsm_reader.block_iterator_builder().await?;

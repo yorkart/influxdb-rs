@@ -43,6 +43,10 @@ where
             block: vec![],
         })
     }
+
+    pub fn typ(&self) -> u8 {
+        self.entries.typ
+    }
 }
 
 #[async_trait]
